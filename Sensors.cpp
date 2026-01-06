@@ -1,0 +1,211 @@
+#include <Arduino.h>
+#include <SoftwareWire.h>
+#include "Sensors.h"
+
+namespace Sensors {
+
+const int VL_SDA = Config::Pins::VL53L0X_SDA;
+const int VL_SCL = Config::Pins::VL53L0X_SCL;
+const uint8_t VL_ADDR = 0x29;
+SoftwareWire myWire(VL_SDA, VL_SCL);
+
+// Sensor State
+bool js40fStates[4] = {false};
+static unsigned long js40LastDebounce[4] = {0};
+static uint16_t vl53loxDistance = 8190;
+static bool vl53loxReady = false;
+static bool centerLineDetected = false;
+
+// Config State (DIP)
+static bool vlDisableSwitchState = false;
+static bool debugModeEnabled = false;
+static bool lineInvertEnabled = false;
+
+// Robot Logic State
+static bool robotReadyState = false;
+static bool matchStarted = false;
+static bool stopSequenceRequested = false;
+static unsigned long lastSensorRead = 0;
+static unsigned long lastVL53Read = 0;
+static unsigned long lastBlinkTime = 0;
+static int readyBlinkCount = 0;
+
+enum RobotState { STARTUP_ERROR, STARTUP_READY_SIGNAL, OPERATIONAL, MATCH_STOPPED };
+static RobotState currentState;
+
+// I2C Helpers
+void writeReg(uint8_t reg, uint8_t value) {
+  myWire.beginTransmission(VL_ADDR); myWire.write(reg); myWire.write(value); myWire.endTransmission();
+}
+uint8_t readReg(uint8_t reg) {
+  myWire.beginTransmission(VL_ADDR); myWire.write(reg); myWire.endTransmission(); myWire.requestFrom(VL_ADDR, (uint8_t)1); return myWire.read();
+}
+
+// Magic sequence to kickstart the VL53L0X without full API
+void kickstartVL53L0X() {
+  writeReg(0x88, 0x00); writeReg(0x80, 0x01); writeReg(0xFF, 0x01); writeReg(0x00, 0x00);
+  writeReg(0x91, 0x3C); writeReg(0x00, 0x01); writeReg(0xFF, 0x00); writeReg(0x80, 0x00);
+  writeReg(0x80, 0x01); writeReg(0xFF, 0x01); writeReg(0x00, 0x00); writeReg(0x91, 0x3C);
+  writeReg(0x00, 0x01); writeReg(0xFF, 0x00); writeReg(0x80, 0x00); writeReg(0x00, 0x02);
+}
+
+void init() {
+  lastSensorRead = 0;
+
+  // Pin Setup
+  pinMode(Config::Pins::CENTER_LINE, INPUT);
+  pinMode(Config::Pins::IR_START_MODULE, INPUT);
+
+  pinMode(Config::Pins::JS40F_FRONT_LEFT, INPUT);
+  pinMode(Config::Pins::JS40F_FRONT_RIGHT, INPUT);
+  pinMode(Config::Pins::JS40F_SIDE_LEFT, INPUT);
+  pinMode(Config::Pins::JS40F_SIDE_RIGHT, INPUT);
+
+  pinMode(Config::Pins::DIP_VL_DISABLE, INPUT_PULLUP);
+  pinMode(Config::Pins::DIP_DEBUG_MODE, INPUT_PULLUP);
+  pinMode(Config::Pins::DIP_LINE_INVERT, INPUT_PULLUP);
+
+  // I2C Init
+  myWire.begin();
+  delay(50);
+  myWire.setClock(50000); // Low speed for software I2C stability
+  delay(100);
+  kickstartVL53L0X();
+
+  // Safety check: Is the start module active on boot?
+  int initialIRState = digitalRead(Config::Pins::IR_START_MODULE);
+  if (initialIRState == 1) {
+      currentState = STARTUP_ERROR;
+  } else {
+    robotReadyState = true;
+    currentState = STARTUP_READY_SIGNAL;
+  }
+}
+
+void update(unsigned long currentTime) {
+  // --- Status LED Logic ---
+  if (currentState == STARTUP_READY_SIGNAL) {
+      if (currentTime - lastBlinkTime > 200) {
+        lastBlinkTime = currentTime;
+        digitalWrite(Config::Pins::STATUS_LED, !digitalRead(Config::Pins::STATUS_LED));
+        // 6 Blinks -> Ready
+        if (++readyBlinkCount >= 6) {
+            digitalWrite(Config::Pins::STATUS_LED, LOW);
+            currentState = OPERATIONAL;
+        }
+      }
+  } else if (currentState == STARTUP_ERROR || currentState == MATCH_STOPPED) {
+      // Continuous slow blink for errors/stop
+      if (currentTime - lastBlinkTime > 250) {
+        lastBlinkTime = currentTime;
+        digitalWrite(Config::Pins::STATUS_LED, !digitalRead(Config::Pins::STATUS_LED));
+      }
+      return; // Halt sensor processing
+  }
+
+  // --- Fast Polling (5ms) ---
+  if ((currentTime - lastSensorRead) >= 5) {
+    lastSensorRead = currentTime;
+
+    // DIP Configuration
+    vlDisableSwitchState = (digitalRead(Config::Pins::DIP_VL_DISABLE) == LOW);
+    debugModeEnabled = (digitalRead(Config::Pins::DIP_DEBUG_MODE) == LOW);
+    lineInvertEnabled = (digitalRead(Config::Pins::DIP_LINE_INVERT) == LOW);
+
+    // JS40F: Sequential read to avoid crosstalk/spikes
+    static int phase = 0;
+    uint8_t pins[] = { Config::Pins::JS40F_FRONT_LEFT, Config::Pins::JS40F_FRONT_RIGHT, Config::Pins::JS40F_SIDE_LEFT, Config::Pins::JS40F_SIDE_RIGHT };
+
+    bool val = digitalRead(pins[phase]) == HIGH;
+    if (val != js40fStates[phase]) {
+       // Debounce 50ms
+       if (currentTime - js40LastDebounce[phase] > 50) {
+         js40fStates[phase] = val;
+         js40LastDebounce[phase] = currentTime;
+       }
+    }
+    phase = (phase + 1) % 4;
+
+    // Line Sensor
+    bool rawLine = (digitalRead(Config::Pins::CENTER_LINE) == LOW);
+    if (lineInvertEnabled) rawLine = !rawLine;
+    centerLineDetected = rawLine;
+  }
+
+  // --- Distance Sensor (33ms) ---
+  if ((currentTime - lastVL53Read) >= 33) {
+    lastVL53Read = currentTime;
+
+    readReg(0x13);
+    myWire.beginTransmission(VL_ADDR); myWire.write(0x1E); myWire.endTransmission();
+    myWire.requestFrom(VL_ADDR, (uint8_t)2);
+
+    if (myWire.available() >= 2) {
+      uint8_t hi = myWire.read();
+      uint8_t lo = myWire.read();
+      uint16_t r = (hi << 8) | lo;
+
+      // Filter noise (valid range 20-8000)
+      if (r > 20 && r < 8000) {
+          vl53loxDistance = r + 20;
+          vl53loxReady = (vl53loxDistance < 800);
+      } else {
+          vl53loxReady = false;
+          vl53loxDistance = 8190;
+      }
+    }
+    writeReg(0x0B, 0x01); // Trigger next read
+  }
+
+  // Start Module Logic
+  if (matchStarted && !stopSequenceRequested) handleIRStopSequence();
+  if (stopSequenceRequested) { currentState = MATCH_STOPPED; return; }
+  if (robotReadyState && !matchStarted) handleIRStartSequence();
+}
+
+// --- Getters & Helpers ---
+
+void handleIRStartSequence() { if (digitalRead(Config::Pins::IR_START_MODULE) == 1) matchStarted = true; }
+void handleIRStopSequence() { if (digitalRead(Config::Pins::IR_START_MODULE) == 0) stopSequenceRequested = true; }
+
+bool isIRModuleConnected() { return robotReadyState; }
+bool hasMatchStarted() { return matchStarted; }
+bool shouldStopRobot() { return stopSequenceRequested; }
+void resetStartStopState() { robotReadyState = false; matchStarted = false; stopSequenceRequested = false; }
+bool isStartButtonPressed() { return matchStarted; }
+bool isStopButtonPressed() { return stopSequenceRequested; }
+
+bool isJS40FDetected(int idx) { return (idx >= 0 && idx < 4) ? js40fStates[idx] : false; }
+bool isAnyJS40FDetected() { for(int i=0; i<4; i++) if(js40fStates[i]) return true; return false; }
+int getJS40FDetectionPattern() { int p = 0; for(int i=0; i<4; i++) if(js40fStates[i]) p |= (1<<i); return p; }
+
+bool isVL53L0XReady() { return vl53loxReady; }
+uint16_t getVL53L0XDistance() { return vl53loxDistance; }
+bool isVL53L0XDisabled() { return vlDisableSwitchState; }
+bool isDebugModeEnabled() { return debugModeEnabled; }
+bool isLineInvertEnabled() { return lineInvertEnabled; }
+
+bool isOpponentInFrontCenter() {
+    if (vlDisableSwitchState) return false;
+    if (vl53loxReady && vl53loxDistance < 300) return true;
+    return false;
+}
+bool isOpponentDetected() { return isAnyJS40FDetected() || isOpponentInFrontCenter(); }
+
+int getOpponentDirection() {
+  // CRITICAL: Dual Front detection takes priority over single sensors
+  if (js40fStates[0] && js40fStates[1]) return CENTER;
+  if (isOpponentInFrontCenter()) return CENTER;
+
+  if (js40fStates[0]) return FRONT_LEFT;
+  if (js40fStates[1]) return FRONT_RIGHT;
+  if (js40fStates[2]) return SIDE_LEFT;
+  if (js40fStates[3]) return SIDE_RIGHT;
+  return -1;
+}
+
+bool isCenterLineDetected() { return centerLineDetected; }
+int getCenterLineValue() { return 0; }
+int getOpponentPosition() { for(int i=0; i<4; i++) if(js40fStates[i]) return i; return -1; }
+
+} // namespace
