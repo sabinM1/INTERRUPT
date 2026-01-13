@@ -27,7 +27,7 @@ namespace StateMachine {
   static const int TRACK_TURN_DIFF = 10;
   static const int MEMORY_ATTACK_BONUS = 25;
   static const int RETREAT_PWR = 100;
-  static const int RETREAT_TURN_PWR = 60;
+  static const int RETREAT_TURN_PWR = 100;
 
   void init() {
     currentState = State::STARTUP;
@@ -76,9 +76,11 @@ namespace StateMachine {
     // Priority: Edge > Attack > Track/Search
     if (centerEdge) {
       if (currentState != State::RETREAT_TURN) {
-          lastActionTaken = 0;
+          lastActionTaken = (uint8_t)!lastActionTaken;
           currentState = State::RETREAT_TURN;
           stateEnterTime = currentTime;
+          // Apply immediate reverse to stop before overshooting
+          Motors::setTargetSpeed(-RETREAT_PWR, -RETREAT_PWR);
       }
     }
     else if (currentState != State::RETREAT_TURN) {

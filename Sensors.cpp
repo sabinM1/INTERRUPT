@@ -15,6 +15,7 @@ static unsigned long js40LastDebounce[4] = {0};
 static uint16_t vl53loxDistance = 8190;
 static bool vl53loxReady = false;
 static bool centerLineDetected = false;
+static int lineTriggerCount = 0;
 
 // Config State (DIP)
 static bool vlDisableSwitchState = false;
@@ -51,6 +52,7 @@ void kickstartVL53L0X() {
 
 void init() {
   lastSensorRead = 0;
+  lineTriggerCount = 0;
 
   // Pin Setup
   pinMode(Config::Pins::CENTER_LINE, INPUT);
@@ -126,14 +128,29 @@ void update(unsigned long currentTime) {
     }
     phase = (phase + 1) % 4;
 
-    // Line Sensor
-    bool rawLine = (digitalRead(Config::Pins::CENTER_LINE) == LOW);
-    if (lineInvertEnabled) rawLine = !rawLine;
-    centerLineDetected = rawLine;
+
   }
 
-  // --- Distance Sensor (33ms) ---
-  if ((currentTime - lastVL53Read) >= 33) {
+  // --- Ultra-Fast Line Polling (Double Check) ---
+  // Polled every loop for maximum responsiveness to prevent overshoot. 
+  // A 2-read confirmation filters out high-frequency false positives (EMI/Noise)
+  // while maintaining sub-millisecond reaction times.
+  bool currentRawLine = (digitalRead(Config::Pins::CENTER_LINE) == LOW);
+  if (lineInvertEnabled) currentRawLine = !currentRawLine;
+
+  if (currentRawLine) {
+    lineTriggerCount++;
+    if (lineTriggerCount >= 2) {
+      centerLineDetected = true;
+      lineTriggerCount = 2; // Clamp
+    }
+  } else {
+    lineTriggerCount = 0;
+    centerLineDetected = false;
+  }
+
+  // --- Distance Sensor (30ms) ---
+  if ((currentTime - lastVL53Read) >= 30) {
     lastVL53Read = currentTime;
 
     readReg(0x13);

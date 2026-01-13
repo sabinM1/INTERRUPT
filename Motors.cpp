@@ -13,7 +13,8 @@ namespace Motors {
   }
 
   void update(unsigned long currentTime) {
-    if ((currentTime - lastMotorUpdate) < Config::Timing::MOTOR_UPDATE) return;
+    // Bypass update delay if line is detected to ensure instant reaction and prevent overshoot
+    if (!Sensors::isCenterLineDetected() && (currentTime - lastMotorUpdate) < Config::Timing::MOTOR_UPDATE) return;
     lastMotorUpdate = currentTime;
 
     int clampedLeft = constrain(targetLeft, -100, 100);
