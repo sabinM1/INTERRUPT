@@ -52,8 +52,8 @@ namespace Config {
   }
 
   namespace Movement { // ms
-    constexpr unsigned long RETREAT_DURATION = 150;
-    constexpr unsigned long TURN_DURATION    = 250;
+    constexpr unsigned long RETREAT_DURATION = 280;
+    constexpr unsigned long TURN_DURATION    = 105;
   }
 }
 #endif

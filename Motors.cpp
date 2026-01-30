@@ -20,9 +20,11 @@ namespace Motors {
     int clampedLeft = constrain(targetLeft, -100, 100);
     int clampedRight = constrain(targetRight, -100, 100);
 
-    // --- Left Motor Ramp ---
-    // Instant reverse if direction flips, otherwise smooth ramp
-    if ((actualLeft > 0 && clampedLeft < 0) || (actualLeft < 0 && clampedLeft > 0)) {
+    // --- Motor Ramping ---
+    // Bypass ramping entirely if line is detected or if direction flips for instant reaction
+    bool lineActive = Sensors::isCenterLineDetected();
+
+    if (lineActive || (actualLeft > 0 && clampedLeft < 0) || (actualLeft < 0 && clampedLeft > 0)) {
         actualLeft = clampedLeft;
     } else {
         int delta = clampedLeft - actualLeft;
@@ -32,8 +34,7 @@ namespace Motors {
             actualLeft = clampedLeft;
     }
 
-    // --- Right Motor Ramp ---
-    if ((actualRight > 0 && clampedRight < 0) || (actualRight < 0 && clampedRight > 0)) {
+    if (lineActive || (actualRight > 0 && clampedRight < 0) || (actualRight < 0 && clampedRight > 0)) {
         actualRight = clampedRight;
     } else {
         int delta = clampedRight - actualRight;

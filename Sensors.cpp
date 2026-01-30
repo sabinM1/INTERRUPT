@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <SoftwareWire.h>
 #include "Sensors.h"
+#include "StateMachine.h" // Include StateMachine header
 
 namespace Sensors {
 
@@ -138,16 +139,7 @@ void update(unsigned long currentTime) {
   bool currentRawLine = (digitalRead(Config::Pins::CENTER_LINE) == LOW);
   if (lineInvertEnabled) currentRawLine = !currentRawLine;
 
-  if (currentRawLine) {
-    lineTriggerCount++;
-    if (lineTriggerCount >= 2) {
-      centerLineDetected = true;
-      lineTriggerCount = 2; // Clamp
-    }
-  } else {
-    lineTriggerCount = 0;
-    centerLineDetected = false;
-  }
+  centerLineDetected = currentRawLine;
 
   // --- Distance Sensor (30ms) ---
   if ((currentTime - lastVL53Read) >= 30) {
@@ -185,6 +177,14 @@ void update(unsigned long currentTime) {
 void handleIRStartSequence() { if (digitalRead(Config::Pins::IR_START_MODULE) == 1) matchStarted = true; }
 void handleIRStopSequence() { if (digitalRead(Config::Pins::IR_START_MODULE) == 0) stopSequenceRequested = true; }
 
+// Modifiy this function to ignore the line sensor during RETREAT_TURN state
+bool isCenterLineDetected() { 
+  if (StateMachine::getCurrentState() == StateMachine::State::RETREAT_TURN) {
+    return false; // Ignore line sensor during retreat
+  }
+  return centerLineDetected; 
+}
+
 bool isIRModuleConnected() { return robotReadyState; }
 bool hasMatchStarted() { return matchStarted; }
 bool shouldStopRobot() { return stopSequenceRequested; }
@@ -221,7 +221,6 @@ int getOpponentDirection() {
   return -1;
 }
 
-bool isCenterLineDetected() { return centerLineDetected; }
 int getCenterLineValue() { return 0; }
 int getOpponentPosition() { for(int i=0; i<4; i++) if(js40fStates[i]) return i; return -1; }
 
