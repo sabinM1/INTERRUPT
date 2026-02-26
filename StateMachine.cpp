@@ -22,12 +22,7 @@ namespace StateMachine {
   static unsigned long attackDirectionStartTime = 0;
   static int lastAttackDirection = -1;
 
-  // Tuning
-  static const int TRACK_SPEED_BASE = 20;
-  static const int TRACK_TURN_DIFF = 10;
-  static const int MEMORY_ATTACK_BONUS = 25;
-  static const int RETREAT_PWR = 100;
-  static const int RETREAT_TURN_PWR = 100;
+  // Tuning - now configured in Config.h
 
   void init() {
     currentState = State::STARTUP;
@@ -80,22 +75,31 @@ namespace StateMachine {
           currentState = State::RETREAT_TURN;
           stateEnterTime = currentTime;
           // Apply immediate reverse to stop before overshooting
-          Motors::setTargetSpeed(-RETREAT_PWR, -RETREAT_PWR);
+          Motors::setTargetSpeed(-Config::Motor::Speeds::RETREAT_POWER, -Config::Motor::Speeds::RETREAT_POWER);
       }
     }
     else if (currentState != State::RETREAT_TURN) {
         if (opponentDetected && currentOpponentDir != -1) {
           bool shouldAttack = (currentOpponentDir == FRONT_LEFT || currentOpponentDir == FRONT_RIGHT || currentOpponentDir == CENTER || currentOpponentDir == SIDE_LEFT || currentOpponentDir == SIDE_RIGHT);
+          bool bothSidesDetected = (currentOpponentDir == BOTH_SIDES);
 
-          if (shouldAttack && currentState != State::ATTACK) {
-            currentState = State::ATTACK;
-            stateEnterTime = currentTime;
+          if (bothSidesDetected) {
+            if (currentState != State::BOTH_SIDES_ATTACK) {
+              currentState = State::BOTH_SIDES_ATTACK;
+              stateEnterTime = currentTime;
+            }
           }
-          else if (shouldAttack && currentState == State::SEARCH) {
-            currentState = State::TRACKING;
+          else if (shouldAttack) {
+            if (currentState != State::ATTACK) {
+              currentState = State::ATTACK;
+              stateEnterTime = currentTime;
+            }
+            else if (currentState == State::SEARCH) {
+              currentState = State::TRACKING;
+            }
           }
         }
-        else if (!opponentDetected && lastOpponentDirection != -1 && (currentTime - lastOpponentSeen) < 500) {
+        else if (!opponentDetected && lastOpponentDirection != -1 && (currentTime - lastOpponentSeen) < Config::Timing::MEMORY_PERSISTENCE) {
            // Short memory persistence
            if(currentState != State::ATTACK) currentState = State::TRACKING;
         }
@@ -117,9 +121,9 @@ namespace StateMachine {
 
         // Boost speed if we recently saw something
         if (lastOpponentDirection == -1 || (currentTime - lastOpponentSeen) > Config::Timing::OPPONENT_LOST_TIMEOUT) {
-          baseSearchSpeed = 40;
+          baseSearchSpeed = Config::Motor::Speeds::SEARCH_BASE;
         } else {
-          baseSearchSpeed = 60;
+          baseSearchSpeed = Config::Motor::Speeds::SEARCH_BOOSTED;
         }
 
         int leftSpeed = baseSearchSpeed;
@@ -129,11 +133,11 @@ namespace StateMachine {
         // This prevents "ghost" sensors from causing spin-outs
         if (lastOpponentDirection != -1 && (currentTime - lastOpponentSeen) <= Config::Timing::OPPONENT_LOST_TIMEOUT) {
             if (lastOpponentDirection == FRONT_LEFT || lastOpponentDirection == SIDE_LEFT) {
-                leftSpeed = 20;
-                rightSpeed = 80;
+                leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
+                rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
             } else if (lastOpponentDirection == FRONT_RIGHT || lastOpponentDirection == SIDE_RIGHT) {
-                leftSpeed = 80;
-                rightSpeed = 20;
+                leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
+                rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
             }
         } else {
           // Standard Search: Shallow wiggle
@@ -142,11 +146,11 @@ namespace StateMachine {
             seekingRightward = !seekingRightward;
           }
           if (seekingRightward) {
-              leftSpeed += 15;
-              rightSpeed -= 15;
+              leftSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+              rightSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
           } else {
-              leftSpeed -= 15;
-              rightSpeed += 15;
+              leftSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+              rightSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
           }
         }
 
@@ -158,17 +162,17 @@ namespace StateMachine {
 
       case State::TRACKING: {
         // Gentle realignment
-        int leftTrackSpeed = TRACK_SPEED_BASE;  // 20
-        int rightTrackSpeed = TRACK_SPEED_BASE; // 20
+        int leftTrackSpeed = Config::Motor::Speeds::TRACK_BASE;  // 20
+        int rightTrackSpeed = Config::Motor::Speeds::TRACK_BASE; // 20
 
         if (lastOpponentDirection != -1) {
           if (lastOpponentDirection == FRONT_LEFT || lastOpponentDirection == SIDE_LEFT) {
-             leftTrackSpeed = TRACK_SPEED_BASE - TRACK_TURN_DIFF; // 10
-             rightTrackSpeed = TRACK_SPEED_BASE + TRACK_TURN_DIFF; // 30
+             leftTrackSpeed = Config::Motor::Speeds::TRACK_BASE - Config::Motor::Speeds::TRACK_TURN_DIFF; // 10
+             rightTrackSpeed = Config::Motor::Speeds::TRACK_BASE + Config::Motor::Speeds::TRACK_TURN_DIFF; // 30
           }
           else if (lastOpponentDirection == FRONT_RIGHT || lastOpponentDirection == SIDE_RIGHT) {
-             leftTrackSpeed = TRACK_SPEED_BASE + TRACK_TURN_DIFF; // 30
-             rightTrackSpeed = TRACK_SPEED_BASE - TRACK_TURN_DIFF; // 10
+             leftTrackSpeed = Config::Motor::Speeds::TRACK_BASE + Config::Motor::Speeds::TRACK_TURN_DIFF; // 30
+             rightTrackSpeed = Config::Motor::Speeds::TRACK_BASE - Config::Motor::Speeds::TRACK_TURN_DIFF; // 10
           }
         }
         Motors::setTargetSpeed(leftTrackSpeed, rightTrackSpeed);
@@ -180,13 +184,13 @@ namespace StateMachine {
 
         // Phase 1: Back up straight
         if (elapsed < Config::Movement::RETREAT_DURATION) {
-          Motors::setTargetSpeed(-RETREAT_PWR, -RETREAT_PWR);
+          Motors::setTargetSpeed(-Config::Motor::Speeds::RETREAT_POWER, -Config::Motor::Speeds::RETREAT_POWER);
         }
         // Phase 2: J-Turn
         else if (elapsed < (Config::Movement::RETREAT_DURATION + Config::Movement::TURN_DURATION)) {
           bool turnRight = (lastActionTaken == 0); // Toggle this logic if needed
-          if (turnRight) Motors::setTargetSpeed(RETREAT_TURN_PWR, -RETREAT_TURN_PWR);
-          else Motors::setTargetSpeed(-RETREAT_TURN_PWR, RETREAT_TURN_PWR);
+          if (turnRight) Motors::setTargetSpeed(Config::Motor::Speeds::RETREAT_TURN_POWER, -Config::Motor::Speeds::RETREAT_TURN_POWER);
+          else Motors::setTargetSpeed(-Config::Motor::Speeds::RETREAT_TURN_POWER, Config::Motor::Speeds::RETREAT_TURN_POWER);
         }
         else {
           currentState = State::SEARCH;
@@ -198,14 +202,14 @@ namespace StateMachine {
       case State::ATTACK: {
         // Debounce loss of target
         bool opponentStillDetected = Sensors::isOpponentDetected();
-        if (!opponentStillDetected && (currentTime - lastOpponentSeen) > 200) {
+        if (!opponentStillDetected && (currentTime - lastOpponentSeen) > Config::Timing::ATTACK_LOST_TIMEOUT) {
           currentState = State::SEARCH;
           break;
         }
 
         int direction = Sensors::getOpponentDirection();
-        int leftSpeed = 100;
-        int rightSpeed = 100;
+        int leftSpeed = Config::Motor::Speeds::ATTACK_FULL;
+        int rightSpeed = Config::Motor::Speeds::ATTACK_FULL;
 
         // Anti-Stall Detection
         if (direction != lastAttackDirection) {
@@ -214,29 +218,29 @@ namespace StateMachine {
         }
 
         // If pushing same direction > 1s, force straight to break deadlock
-        bool stallDetected = (currentTime - attackDirectionStartTime > 1000);
+        bool stallDetected = (currentTime - attackDirectionStartTime > Config::Timing::STALL_DETECTION);
         if (stallDetected && (direction == FRONT_LEFT || direction == FRONT_RIGHT)) {
-             leftSpeed = 100; rightSpeed = 100;
+             leftSpeed = Config::Motor::Speeds::ATTACK_FULL; rightSpeed = Config::Motor::Speeds::ATTACK_FULL;
         }
         else {
             if (direction == SIDE_LEFT) {
-                leftSpeed = -50; rightSpeed = 100;
+                leftSpeed = 0; rightSpeed = Config::Motor::Speeds::ATTACK_SIDE;
             }
             else if (direction == SIDE_RIGHT) {
-                leftSpeed = 100; rightSpeed = -50;
+                leftSpeed = Config::Motor::Speeds::ATTACK_SIDE; rightSpeed = 0;
             }
             else if (direction == FRONT_LEFT) {
-                leftSpeed = 0; rightSpeed = 100;
+                leftSpeed = 0; rightSpeed = Config::Motor::Speeds::ATTACK_FRONT_TURN;
             }
             else if (direction == FRONT_RIGHT) {
-                leftSpeed = 100; rightSpeed = 0;
+                leftSpeed = Config::Motor::Speeds::ATTACK_FRONT_TURN; rightSpeed = 0;
             }
         }
 
         // Turbo boost if centered
-        if ((currentTime - lastOpponentSeen) < 100 && direction == CENTER) {
-           leftSpeed += MEMORY_ATTACK_BONUS;
-           rightSpeed += MEMORY_ATTACK_BONUS;
+        if ((currentTime - lastOpponentSeen) < Config::Timing::CENTER_BOOST_WINDOW && direction == CENTER) {
+           leftSpeed += Config::Motor::Speeds::MEMORY_ATTACK_BONUS;
+           rightSpeed += Config::Motor::Speeds::MEMORY_ATTACK_BONUS;
         }
 
         leftSpeed = max(-100, min(100, leftSpeed));
@@ -247,6 +251,36 @@ namespace StateMachine {
 
       case State::STOPPED: {
         Motors::setTargetSpeed(0, 0);
+        break;
+      }
+
+      case State::BOTH_SIDES_ATTACK: {
+        // Check if opponent is still detected
+        bool opponentStillDetected = Sensors::isOpponentDetected();
+        int currentDir = Sensors::getOpponentDirection();
+
+        if (!opponentStillDetected) {
+          // Transition back to SEARCH if we lose opponent completely
+          if ((currentTime - lastOpponentSeen) > Config::Timing::ATTACK_LOST_TIMEOUT) {
+            currentState = State::SEARCH;
+          }
+          break;
+        }
+
+        // If detection changed from BOTH_SIDES to something else, transition appropriately
+        if (currentDir != BOTH_SIDES) {
+          if (currentDir == FRONT_LEFT || currentDir == FRONT_RIGHT ||
+              currentDir == CENTER || currentDir == SIDE_LEFT || currentDir == SIDE_RIGHT) {
+            currentState = State::ATTACK;
+            stateEnterTime = currentTime;
+          } else {
+            currentState = State::SEARCH;
+          }
+          break;
+        }
+
+        Motors::setTargetSpeed(Config::Motor::Speeds::BOTH_SIDES, Config::Motor::Speeds::BOTH_SIDES);
+
         break;
       }
     }
@@ -262,6 +296,7 @@ namespace StateMachine {
       case State::RETREAT_TURN: return "RETREAT";
       case State::ATTACK: return "ATTACK";
       case State::STOPPED: return "STOPPED";
+      case State::BOTH_SIDES_ATTACK: return "BOTH_SIDES";
       default: return "UNKNOWN";
     }
   }
@@ -281,6 +316,7 @@ namespace StateMachine {
       case SIDE_LEFT:   return "S_LEFT";
       case SIDE_RIGHT:  return "S_RIGHT";
       case CENTER:      return "CENTER";
+      case BOTH_SIDES:  return "BOTH_SIDES";
       default:          return "NONE";
     }
   }

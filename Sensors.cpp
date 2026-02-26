@@ -213,6 +213,9 @@ int getOpponentDirection() {
   // CRITICAL: Dual Front detection takes priority over single sensors
   if (js40fStates[0] && js40fStates[1]) return CENTER;
   if (isOpponentInFrontCenter()) return CENTER;
+  
+  // Check for both side sensors
+  if (js40fStates[2] && js40fStates[3]) return BOTH_SIDES;
 
   if (js40fStates[0]) return FRONT_LEFT;
   if (js40fStates[1]) return FRONT_RIGHT;

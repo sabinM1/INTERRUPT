@@ -11,6 +11,7 @@ constexpr int FRONT_RIGHT = 1;
 constexpr int SIDE_LEFT = 2;
 constexpr int SIDE_RIGHT = 3;
 constexpr int CENTER = 4;
+constexpr int BOTH_SIDES = 5;
 
 namespace Sensors {
   extern bool js40fStates[4]; // Exposed for debug access

@@ -40,15 +40,43 @@ namespace Config {
     constexpr unsigned long SEEK_PATTERNS       = 1500;
     constexpr unsigned long OPPONENT_LOST_TIMEOUT = 750;
     constexpr unsigned long LINE_SENSOR_DISPLAY = 50;
+
+    // State transition timings (milliseconds)
+    constexpr unsigned long ATTACK_LOST_TIMEOUT = 200;   // Time before exiting attack if opponent lost
+    constexpr unsigned long MEMORY_PERSISTENCE = 500;    // How long to remember last opponent position
+    constexpr unsigned long STALL_DETECTION = 1000;      // Time before stall detection activates
+    constexpr unsigned long CENTER_BOOST_WINDOW = 100;   // Time window for center boost after detection
   }
 
   namespace Motor { // PWM (0-255)
-    constexpr int FORWARD_SPEED   = 100;
-    constexpr int TURN_SPEED      = 100;
-    constexpr int RETREAT_SPEED   = 100;
-    constexpr int MAX_ACCEL_DELTA = 15; // Soft start ramp
-    constexpr int SEEK_SPEED      = 70;
-    constexpr int ATTACK_SPEED    = 125;
+    constexpr int MAX_ACCEL_DELTA = 15; // Soft start ramp for motor acceleration
+
+    // State-specific speeds (0-100 scale, negative for reverse)
+    namespace Speeds {
+      // Search state: Robot scans for opponent
+      constexpr int SEARCH_BASE = 10;        // Base speed when no recent opponent seen
+      constexpr int SEARCH_BOOSTED = 30;     // Speed when opponent recently detected
+      constexpr int SEARCH_CURVE_INSIDE = 10; // Inner wheel speed when curving toward last known position
+      constexpr int SEARCH_CURVE_OUTSIDE = 35; // Outer wheel speed when curving toward last known position
+      constexpr int SEARCH_WIGGLE_DIFF = 10;  // Speed difference for search wiggle pattern
+
+      // Tracking state: Gentle realignment toward opponent
+      constexpr int TRACK_BASE = 20;         // Base tracking speed (both wheels)
+      constexpr int TRACK_TURN_DIFF = 10;    // Speed difference between wheels for turning
+
+      // Attack state: Aggressive engagement with opponent
+      constexpr int ATTACK_FULL = 100;       // Full forward speed for centered opponent
+      constexpr int ATTACK_SIDE = 20;        // Speed when opponent detected on side sensors
+      constexpr int ATTACK_FRONT_TURN = 70;  // Turning speed when opponent on front-left/right
+      constexpr int MEMORY_ATTACK_BONUS = 25; // Speed bonus for recently centered opponent
+
+      // Both sides attack state: Opponent detected on both side sensors
+      constexpr int BOTH_SIDES = 20;         // Forward speed when opponent on both sides
+
+      // Retreat state: Edge avoidance and recovery
+      constexpr int RETREAT_POWER = 100;     // Reverse power during retreat phase
+      constexpr int RETREAT_TURN_POWER = 100; // Turning power during J-turn phase
+    }
   }
 
   namespace Movement { // ms

@@ -11,7 +11,8 @@ namespace StateMachine {
     TRACKING = 2,
     RETREAT_TURN = 3,
     ATTACK = 4,
-    STOPPED = 5
+    STOPPED = 5,
+    BOTH_SIDES_ATTACK = 6
   };
 
   void init();
