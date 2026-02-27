@@ -221,6 +221,7 @@ namespace StateMachine {
         }
 
         int direction = Sensors::getOpponentDirection();
+        int sensorPattern = Sensors::getCombinedSensorPattern();
 
         // Limit power if attacking for less than 1 second
         int attackPower = (currentTime - attackStartTime < Config::Timing::ATTACK_POWER_LIMIT_TIME)
@@ -235,10 +236,25 @@ namespace StateMachine {
             lastAttackDirection = direction;
             attackDirectionStartTime = currentTime;
         }
-
-        // If pushing same direction > 1s, force straight to break deadlock
         bool stallDetected = (currentTime - attackDirectionStartTime > Config::Timing::STALL_DETECTION);
-        if (stallDetected && (direction == FRONT_LEFT || direction == FRONT_RIGHT)) {
+
+        // Check for combined sensor patterns first
+        bool sideLeftDetected = (sensorPattern & (1 << SIDE_LEFT)) != 0;
+        bool sideRightDetected = (sensorPattern & (1 << SIDE_RIGHT)) != 0;
+        bool centerDetected = (sensorPattern & (1 << CENTER)) != 0;
+        
+        // Handle side left + center detection - turn slightly left (20 difference)
+        if (sideLeftDetected && centerDetected) {
+            leftSpeed = max(0, attackPower - 20);
+            rightSpeed = attackPower;
+        }
+        // Handle side right + center detection - turn slightly right (20 difference)
+        else if (sideRightDetected && centerDetected) {
+            leftSpeed = attackPower;
+            rightSpeed = max(0, attackPower - 20);
+        }
+        // If pushing same direction > 1s, force straight to break deadlock
+        else if (stallDetected && (direction == FRONT_LEFT || direction == FRONT_RIGHT)) {
              leftSpeed = attackPower; rightSpeed = attackPower;
         }
         else if (direction == SIDE_LEFT) {
@@ -254,8 +270,11 @@ namespace StateMachine {
             leftSpeed = min(Config::Motor::Speeds::ATTACK_FRONT_TURN, attackPower); rightSpeed = 0;
         }
 
-        // Turbo boost if centered
-        if ((currentTime - lastOpponentSeen) < Config::Timing::CENTER_BOOST_WINDOW && direction == CENTER) {
+        // Turbo boost if centered (but not for combined patterns)
+        if ((currentTime - lastOpponentSeen) < Config::Timing::CENTER_BOOST_WINDOW && 
+            direction == CENTER && 
+            !(sideLeftDetected && centerDetected) && 
+            !(sideRightDetected && centerDetected)) {
            leftSpeed = min(leftSpeed + Config::Motor::Speeds::MEMORY_ATTACK_BONUS, attackPower);
            rightSpeed = min(rightSpeed + Config::Motor::Speeds::MEMORY_ATTACK_BONUS, attackPower);
         }

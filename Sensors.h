@@ -36,6 +36,7 @@ namespace Sensors {
   bool isOpponentDetected();
   int getOpponentDirection();  // Returns -1 if none, else 0-4 (see constants)
   int getOpponentPosition();   // Returns sensor index
+  int getCombinedSensorPattern(); // Returns combined pattern for side+center detection
 
   // JS40F Digital Sensors
   bool isJS40FDetected(int sensorIndex); // 0=FL, 1=FR, 2=SL, 3=SR

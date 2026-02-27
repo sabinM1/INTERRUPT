@@ -73,6 +73,27 @@ namespace Utils {
 
     // Opponent Tracking
     Serial.print(F("|D:")); Serial.print(StateMachine::getDirectionName(StateMachine::getLastOpponentDirection()));
+    
+    // Sensor Pattern Debug
+    int sensorPattern = Sensors::getCombinedSensorPattern();
+    Serial.print(F("|P:"));
+    Serial.print((sensorPattern & (1 << 0)) ? "FL" : "__");
+    Serial.print((sensorPattern & (1 << 1)) ? "FR" : "__");
+    Serial.print((sensorPattern & (1 << 2)) ? "SL" : "__");
+    Serial.print((sensorPattern & (1 << 3)) ? "SR" : "__");
+    Serial.print((sensorPattern & (1 << 4)) ? "C" : "_");
+    
+    // Combined Pattern Indicator
+    bool sideLeftDetected = (sensorPattern & (1 << 2)) != 0;
+    bool sideRightDetected = (sensorPattern & (1 << 3)) != 0;
+    bool centerDetected = (sensorPattern & (1 << 4)) != 0;
+    if (sideLeftDetected && centerDetected) {
+        Serial.print(F("[SL+C]"));
+    } else if (sideRightDetected && centerDetected) {
+        Serial.print(F("[SR+C]"));
+    } else {
+        Serial.print(F("[---]"));
+    }
 
     // Attack Timer Status
     unsigned long attackStartTime = StateMachine::getLastAttackTime();

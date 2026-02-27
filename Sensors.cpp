@@ -224,6 +224,21 @@ int getOpponentDirection() {
   return -1;
 }
 
+int getCombinedSensorPattern() {
+  // Returns a bitmask of detected sensors for combined pattern detection
+  int pattern = 0;
+  if (js40fStates[0]) pattern |= (1 << FRONT_LEFT);   // Bit 0
+  if (js40fStates[1]) pattern |= (1 << FRONT_RIGHT);  // Bit 1
+  if (js40fStates[2]) pattern |= (1 << SIDE_LEFT);    // Bit 2
+  if (js40fStates[3]) pattern |= (1 << SIDE_RIGHT);   // Bit 3
+  
+  // Check for center detection (either dual front sensors or VL53L0X)
+  if (js40fStates[0] && js40fStates[1]) pattern |= (1 << CENTER); // Dual front sensors
+  if (isOpponentInFrontCenter()) pattern |= (1 << CENTER); // VL53L0X center detection
+  
+  return pattern;
+}
+
 int getCenterLineValue() { return 0; }
 int getOpponentPosition() { for(int i=0; i<4; i++) if(js40fStates[i]) return i; return -1; }
 
