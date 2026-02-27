@@ -58,7 +58,8 @@ namespace Utils {
   }
 
   void printStatus() {
-    Serial.print(F("T:")); Serial.print(millis());
+    unsigned long currentTime = millis();
+    Serial.print(F("T:")); Serial.print(currentTime);
     Serial.print(F("|S:")); Serial.print(StateMachine::getStateName());
 
     // Line Status + Invert Flag
@@ -72,6 +73,22 @@ namespace Utils {
 
     // Opponent Tracking
     Serial.print(F("|D:")); Serial.print(StateMachine::getDirectionName(StateMachine::getLastOpponentDirection()));
+
+    // Attack Timer Status
+    unsigned long attackStartTime = StateMachine::getLastAttackTime();
+    bool isLimited = StateMachine::isAttackPowerLimited(currentTime);
+    
+    Serial.print(F("|ATK:"));
+    if (attackStartTime == 0) {
+      Serial.print(F("NEVER"));
+    } else {
+      unsigned long attackDuration = currentTime - attackStartTime;
+      Serial.print(attackDuration);
+      Serial.print(F("ms"));
+    }
+    Serial.print(F("["));
+    Serial.print(isLimited ? F("LIM") : F("FULL"));
+    Serial.print(F("]"));
 
     // ToF Sensor
     Serial.print(F("|VL:"));

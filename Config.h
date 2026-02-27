@@ -28,7 +28,7 @@ namespace Config {
   }
 
   namespace Debug {
-    constexpr float DEBUG_SPEED_MULTIPLIER = 0.1;
+    constexpr float DEBUG_SPEED_MULTIPLIER = 0.4;
   }
 
   namespace Timing { // ms
@@ -46,6 +46,7 @@ namespace Config {
     constexpr unsigned long MEMORY_PERSISTENCE = 500;    // How long to remember last opponent position
     constexpr unsigned long STALL_DETECTION = 1000;      // Time before stall detection activates
     constexpr unsigned long CENTER_BOOST_WINDOW = 100;   // Time window for center boost after detection
+    constexpr unsigned long ATTACK_POWER_LIMIT_TIME = 1000; // Time before using full attack power
   }
 
   namespace Motor { // PWM (0-255)
@@ -66,6 +67,7 @@ namespace Config {
 
       // Attack state: Aggressive engagement with opponent
       constexpr int ATTACK_FULL = 100;       // Full forward speed for centered opponent
+      constexpr int ATTACK_LIMITED = 65;     // Limited attack power after cooldown period
       constexpr int ATTACK_SIDE = 20;        // Speed when opponent detected on side sensors
       constexpr int ATTACK_FRONT_TURN = 70;  // Turning speed when opponent on front-left/right
       constexpr int MEMORY_ATTACK_BONUS = 25; // Speed bonus for recently centered opponent
@@ -80,7 +82,7 @@ namespace Config {
   }
 
   namespace Movement { // ms
-    constexpr unsigned long RETREAT_DURATION = 280;
+    constexpr unsigned long RETREAT_DURATION = 320;
     constexpr unsigned long TURN_DURATION    = 105;
   }
 }

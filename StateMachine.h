@@ -26,6 +26,10 @@ namespace StateMachine {
   const char* getDirectionName(int direction);
 
   void updateOpponentMemory(int direction);
+
+  // Attack timer access
+  unsigned long getLastAttackTime();
+  bool isAttackPowerLimited(unsigned long currentTime);
 }
 
 #endif

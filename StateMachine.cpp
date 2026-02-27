@@ -22,6 +22,11 @@ namespace StateMachine {
   static unsigned long attackDirectionStartTime = 0;
   static int lastAttackDirection = -1;
 
+  // Attack duration tracking
+  static unsigned long attackStartTime = 0;
+
+
+
   // Tuning - now configured in Config.h
 
   void init() {
@@ -32,6 +37,7 @@ namespace StateMachine {
     lastActionTaken = 0;
     attackDirectionStartTime = 0;
     lastAttackDirection = -1;
+    attackStartTime = 0;
   }
 
   void update(unsigned long currentTime) {
@@ -48,6 +54,11 @@ namespace StateMachine {
       previousState = currentState;
       attackDirectionStartTime = 0;
       lastAttackDirection = -1;
+
+      // Track when attack starts
+      if (currentState == State::ATTACK || currentState == State::BOTH_SIDES_ATTACK) {
+        attackStartTime = currentTime;
+      }
     }
 
     // 3. Sensor Snapshot
@@ -87,12 +98,14 @@ namespace StateMachine {
             if (currentState != State::BOTH_SIDES_ATTACK) {
               currentState = State::BOTH_SIDES_ATTACK;
               stateEnterTime = currentTime;
+
             }
           }
           else if (shouldAttack) {
             if (currentState != State::ATTACK) {
               currentState = State::ATTACK;
               stateEnterTime = currentTime;
+
             }
             else if (currentState == State::SEARCH) {
               currentState = State::TRACKING;
@@ -208,8 +221,14 @@ namespace StateMachine {
         }
 
         int direction = Sensors::getOpponentDirection();
-        int leftSpeed = Config::Motor::Speeds::ATTACK_FULL;
-        int rightSpeed = Config::Motor::Speeds::ATTACK_FULL;
+
+        // Limit power if attacking for less than 1 second
+        int attackPower = (currentTime - attackStartTime < Config::Timing::ATTACK_POWER_LIMIT_TIME)
+                         ? Config::Motor::Speeds::ATTACK_LIMITED
+                         : Config::Motor::Speeds::ATTACK_FULL;
+
+        int leftSpeed = attackPower;
+        int rightSpeed = attackPower;
 
         // Anti-Stall Detection
         if (direction != lastAttackDirection) {
@@ -220,32 +239,31 @@ namespace StateMachine {
         // If pushing same direction > 1s, force straight to break deadlock
         bool stallDetected = (currentTime - attackDirectionStartTime > Config::Timing::STALL_DETECTION);
         if (stallDetected && (direction == FRONT_LEFT || direction == FRONT_RIGHT)) {
-             leftSpeed = Config::Motor::Speeds::ATTACK_FULL; rightSpeed = Config::Motor::Speeds::ATTACK_FULL;
+             leftSpeed = attackPower; rightSpeed = attackPower;
         }
-        else {
-            if (direction == SIDE_LEFT) {
-                leftSpeed = 0; rightSpeed = Config::Motor::Speeds::ATTACK_SIDE;
-            }
-            else if (direction == SIDE_RIGHT) {
-                leftSpeed = Config::Motor::Speeds::ATTACK_SIDE; rightSpeed = 0;
-            }
-            else if (direction == FRONT_LEFT) {
-                leftSpeed = 0; rightSpeed = Config::Motor::Speeds::ATTACK_FRONT_TURN;
-            }
-            else if (direction == FRONT_RIGHT) {
-                leftSpeed = Config::Motor::Speeds::ATTACK_FRONT_TURN; rightSpeed = 0;
-            }
+        else if (direction == SIDE_LEFT) {
+            leftSpeed = 0; rightSpeed = Config::Motor::Speeds::ATTACK_SIDE;
+        }
+        else if (direction == SIDE_RIGHT) {
+            leftSpeed = Config::Motor::Speeds::ATTACK_SIDE; rightSpeed = 0;
+        }
+        else if (direction == FRONT_LEFT) {
+            leftSpeed = 0; rightSpeed = min(Config::Motor::Speeds::ATTACK_FRONT_TURN, attackPower);
+        }
+        else if (direction == FRONT_RIGHT) {
+            leftSpeed = min(Config::Motor::Speeds::ATTACK_FRONT_TURN, attackPower); rightSpeed = 0;
         }
 
         // Turbo boost if centered
         if ((currentTime - lastOpponentSeen) < Config::Timing::CENTER_BOOST_WINDOW && direction == CENTER) {
-           leftSpeed += Config::Motor::Speeds::MEMORY_ATTACK_BONUS;
-           rightSpeed += Config::Motor::Speeds::MEMORY_ATTACK_BONUS;
+           leftSpeed = min(leftSpeed + Config::Motor::Speeds::MEMORY_ATTACK_BONUS, attackPower);
+           rightSpeed = min(rightSpeed + Config::Motor::Speeds::MEMORY_ATTACK_BONUS, attackPower);
         }
 
         leftSpeed = max(-100, min(100, leftSpeed));
         rightSpeed = max(-100, min(100, rightSpeed));
         Motors::setTargetSpeed(leftSpeed, rightSpeed);
+
         break;
       }
 
@@ -279,7 +297,12 @@ namespace StateMachine {
           break;
         }
 
-        Motors::setTargetSpeed(Config::Motor::Speeds::BOTH_SIDES, Config::Motor::Speeds::BOTH_SIDES);
+        // Limit power if attacking for less than 1 second
+        int attackPower = (currentTime - attackStartTime < Config::Timing::ATTACK_POWER_LIMIT_TIME)
+                         ? Config::Motor::Speeds::ATTACK_LIMITED
+                         : Config::Motor::Speeds::BOTH_SIDES;
+
+        Motors::setTargetSpeed(attackPower, attackPower);
 
         break;
       }
@@ -319,5 +342,16 @@ namespace StateMachine {
       case BOTH_SIDES:  return "BOTH_SIDES";
       default:          return "NONE";
     }
+  }
+
+  unsigned long getLastAttackTime() {
+    return attackStartTime;
+  }
+
+  bool isAttackPowerLimited(unsigned long currentTime) {
+    if (currentState == State::ATTACK || currentState == State::BOTH_SIDES_ATTACK) {
+      return (currentTime - attackStartTime < Config::Timing::ATTACK_POWER_LIMIT_TIME);
+    }
+    return false;
   }
 }
