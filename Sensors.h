@@ -53,6 +53,12 @@ namespace Sensors {
   void processJS40Sensors(unsigned long currentTime);
   void processVL53Sensor(unsigned long currentTime);
   void processLineSensors();
+
+  // Strategy Selection
+  bool getStrategy1();
+  bool getStrategy2();
+  bool getStrategy3();
+  int getStrategyPattern();
 }
 
 #endif

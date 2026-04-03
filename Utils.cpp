@@ -116,6 +116,10 @@ namespace Utils {
     if (Sensors::isVL53L0XDisabled()) Serial.print(F("OFF"));
     else Serial.print(Sensors::getVL53L0XDistance());
 
+    // Strategy Number (0-7: 3-bit pattern from DIP switches 5,6,7)
+    Serial.print(F("|STRAT:"));
+    Serial.print(Sensors::getStrategyPattern());
+
     Serial.println();
   }
 }

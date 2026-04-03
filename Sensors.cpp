@@ -18,10 +18,15 @@ static bool vl53loxReady = false;
 static bool centerLineDetected = false;
 static int lineTriggerCount = 0;
 
-// Config State (DIP)
-static bool vlDisableSwitchState = false;
-static bool debugModeEnabled = false;
-static bool lineInvertEnabled = false;
+// Config State (from #defines)
+static bool vlDisableSwitchState = !VL_ENABLED;
+static bool debugModeEnabled = DEBUG_MODE_ENABLED;
+static bool lineInvertEnabled = LINE_INVERT_ENABLED;
+
+// Strategy Selection
+static bool strategy1State = false;
+static bool strategy2State = false;
+static bool strategy3State = false;
 
 // Robot Logic State
 static bool robotReadyState = false;
@@ -64,9 +69,9 @@ void init() {
   pinMode(Config::Pins::JS40F_SIDE_LEFT, INPUT);
   pinMode(Config::Pins::JS40F_SIDE_RIGHT, INPUT);
 
-  pinMode(Config::Pins::DIP_VL_DISABLE, INPUT_PULLUP);
-  pinMode(Config::Pins::DIP_DEBUG_MODE, INPUT_PULLUP);
-  pinMode(Config::Pins::DIP_LINE_INVERT, INPUT_PULLUP);
+  pinMode(Config::Pins::STRATEGY_1, INPUT_PULLUP);
+  pinMode(Config::Pins::STRATEGY_2, INPUT_PULLUP);
+  pinMode(Config::Pins::STRATEGY_3, INPUT_PULLUP);
 
   // I2C Init
   myWire.begin();
@@ -110,10 +115,10 @@ void update(unsigned long currentTime) {
   if ((currentTime - lastSensorRead) >= 5) {
     lastSensorRead = currentTime;
 
-    // DIP Configuration
-    vlDisableSwitchState = (digitalRead(Config::Pins::DIP_VL_DISABLE) == LOW);
-    debugModeEnabled = (digitalRead(Config::Pins::DIP_DEBUG_MODE) == LOW);
-    lineInvertEnabled = (digitalRead(Config::Pins::DIP_LINE_INVERT) == LOW);
+    // Strategy Selection
+    strategy1State = (digitalRead(Config::Pins::STRATEGY_1) == LOW);
+    strategy2State = (digitalRead(Config::Pins::STRATEGY_2) == LOW);
+    strategy3State = (digitalRead(Config::Pins::STRATEGY_3) == LOW);
 
     // JS40F: Sequential read to avoid crosstalk/spikes
     static int phase = 0;
@@ -201,6 +206,18 @@ uint16_t getVL53L0XDistance() { return vl53loxDistance; }
 bool isVL53L0XDisabled() { return vlDisableSwitchState; }
 bool isDebugModeEnabled() { return debugModeEnabled; }
 bool isLineInvertEnabled() { return lineInvertEnabled; }
+
+// Strategy getters
+bool getStrategy1() { return strategy1State; }
+bool getStrategy2() { return strategy2State; }
+bool getStrategy3() { return strategy3State; }
+int getStrategyPattern() { 
+    int pattern = 0;
+    if (strategy1State) pattern |= 1;
+    if (strategy2State) pattern |= 2;
+    if (strategy3State) pattern |= 4;
+    return pattern;
+}
 
 bool isOpponentInFrontCenter() {
     if (vlDisableSwitchState) return false;
