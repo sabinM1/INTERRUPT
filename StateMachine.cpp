@@ -33,6 +33,9 @@ namespace StateMachine {
   // Search pattern vars
   static bool seekingRightward = true;
   static unsigned long lastSeekPatternChange = 0;
+  static bool spinDirection = true; // true = clockwise (right spin), false = counter-clockwise
+  static unsigned long lastSpinChangeTime = 0;
+  static bool lastSearchWasSpin = false; // Track search mode for debug prints
 
   // Anti-Stall
   static unsigned long attackDirectionStartTime = 0;
@@ -55,6 +58,9 @@ namespace StateMachine {
     openerHeadingCorrection = 0.0f;
     seekingRightward = true;
     lastSeekPatternChange = 0;
+    spinDirection = true;
+    lastSpinChangeTime = 0;
+    lastSearchWasSpin = false;
     attackDirectionStartTime = 0;
     lastAttackDirection = -1;
     attackStartTime = 0;
@@ -188,42 +194,87 @@ namespace StateMachine {
       }
 
       case State::SEARCH: {
-        // Determine search speed based on opponent memory
-        int baseSpeed = Config::Motor::Speeds::SEARCH_BASE;
-        if (currentTime - lastOpponentSeen < Config::Timing::MEMORY_PERSISTENCE) {
-          baseSpeed = Config::Motor::Speeds::SEARCH_BOOSTED;
-        }
-
-        // Search pattern: alternate between slight left/right curves
-        if (currentTime - lastSeekPatternChange > Config::Timing::SEEK_PATTERNS) {
-          lastSeekPatternChange = currentTime;
-          seekingRightward = !seekingRightward;
-        }
-
-        int leftSpeed = baseSpeed;
-        int rightSpeed = baseSpeed;
-
-        if (seekingRightward) {
-          leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
-          rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
+        // Determine if we should use aggressive spin search
+        bool useSpinSearch = (currentTime - lastOpponentSeen > Config::Timing::MEMORY_PERSISTENCE);
+        
+        int leftSpeed, rightSpeed;
+        
+        if (useSpinSearch) {
+          // Aggressive spin search - rotate in place to scan 360°
+          #ifdef DEBUG_MODE_ENABLED
+          if (DEBUG_MODE_ENABLED && !lastSearchWasSpin) {
+            Serial.println(F("[SEARCH] Switching to SPIN search (no opponent memory)"));
+          }
+          #endif
+          lastSearchWasSpin = true;
+          
+          // Reverse spin direction periodically to avoid getting stuck
+          if (currentTime - lastSpinChangeTime > Config::Timing::SPIN_REVERSE_TIME) {
+            lastSpinChangeTime = currentTime;
+            spinDirection = !spinDirection;
+            #ifdef DEBUG_MODE_ENABLED
+            if (DEBUG_MODE_ENABLED) {
+              Serial.print(F("[SEARCH] Spin direction reversed to: "));
+              Serial.println(spinDirection ? F("CW (right)") : F("CCW (left)"));
+            }
+            #endif
+          }
+          
+          if (spinDirection) {
+            // Clockwise spin (turn right in place)
+            leftSpeed = Config::Motor::Speeds::SPIN_SPEED;
+            rightSpeed = -Config::Motor::Speeds::SPIN_SPEED;
+          } else {
+            // Counter-clockwise spin (turn left in place)
+            leftSpeed = -Config::Motor::Speeds::SPIN_SPEED;
+            rightSpeed = Config::Motor::Speeds::SPIN_SPEED;
+          }
         } else {
-          leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
-          rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
-        }
+          // Standard curved search with opponent memory guidance
+          #ifdef DEBUG_MODE_ENABLED
+          if (DEBUG_MODE_ENABLED && lastSearchWasSpin) {
+            Serial.println(F("[SEARCH] Switching to CURVED search (opponent memory active)"));
+          }
+          #endif
+          lastSearchWasSpin = false;
+          
+          int baseSpeed = Config::Motor::Speeds::SEARCH_BASE;
+          if (currentTime - lastOpponentSeen < Config::Timing::MEMORY_PERSISTENCE) {
+            baseSpeed = Config::Motor::Speeds::SEARCH_BOOSTED;
+          }
 
-        // Add wiggle for better scanning
-        if ((currentTime / 300) % 2 == 0) {
-          leftSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
-          rightSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
-        } else {
-          leftSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
-          rightSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+          // Search pattern: alternate between slight left/right curves
+          if (currentTime - lastSeekPatternChange > Config::Timing::SEEK_PATTERNS) {
+            lastSeekPatternChange = currentTime;
+            seekingRightward = !seekingRightward;
+          }
+
+          leftSpeed = baseSpeed;
+          rightSpeed = baseSpeed;
+
+          if (seekingRightward) {
+            leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
+            rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
+          } else {
+            leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
+            rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
+          }
+
+          // Add wiggle for better scanning
+          if ((currentTime / 300) % 2 == 0) {
+            leftSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+            rightSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+          } else {
+            leftSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+            rightSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+          }
         }
 
         // Check for opponent detection to transition to TRACKING
         if (opponentDetected && currentOpponentDir != -1) {
           currentState = State::TRACKING;
           stateEnterTime = currentTime;
+          return; // Exit immediately to let TRACKING take over next loop
         }
 
         Motors::setTargetSpeed(leftSpeed, rightSpeed);
@@ -247,6 +298,7 @@ namespace StateMachine {
           currentState = State::ATTACK;
           stateEnterTime = currentTime;
           attackStartTime = currentTime;
+          return; // Exit immediately to let ATTACK take over next loop
         }
 
         // Check if opponent lost for transition to SEARCH
@@ -254,6 +306,7 @@ namespace StateMachine {
           if (currentTime - stateEnterTime > Config::Timing::OPPONENT_LOST_TIMEOUT) {
             currentState = State::SEARCH;
             lastSeekPatternChange = currentTime;
+            return; // Exit immediately to let SEARCH take over next loop
           }
         }
 
@@ -273,6 +326,30 @@ namespace StateMachine {
           bool turnRight = (lastActionTaken == 0); // Toggle this logic if needed
           if (turnRight) Motors::setTargetSpeed(Config::Motor::Speeds::RETREAT_TURN_POWER, -Config::Motor::Speeds::RETREAT_TURN_POWER);
           else Motors::setTargetSpeed(-Config::Motor::Speeds::RETREAT_TURN_POWER, Config::Motor::Speeds::RETREAT_TURN_POWER);
+          
+          // Early exit: if line has cleared during turn, go to SEARCH immediately
+          if (!Sensors::isCenterLineDetectedRaw()) {
+            #ifdef DEBUG_MODE_ENABLED
+            if (DEBUG_MODE_ENABLED) {
+              Serial.print(F("[RETREAT] Line cleared during turn, exiting early after "));
+              Serial.print(elapsed);
+              Serial.println(F("ms"));
+            }
+            #endif
+            #ifdef TEST_OPENER_ONLY
+            if (TEST_OPENER_ONLY) {
+              currentState = State::STOPPED;
+              Motors::setTargetSpeed(0, 0);
+            } else {
+              currentState = State::SEARCH;
+              lastSeekPatternChange = currentTime;
+            }
+            #else
+            currentState = State::SEARCH;
+            lastSeekPatternChange = currentTime;
+            #endif
+            return; // Exit immediately
+          }
         }
         else {
           // Check if we're still on the edge line after retreat sequence

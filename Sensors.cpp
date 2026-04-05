@@ -132,30 +132,76 @@ void update(unsigned long currentTime) {
 
   // --- Ultra-Fast Line Polling (Double Check) ---
   // Polled every loop for maximum responsiveness to prevent overshoot.
-  // A 2-read confirmation filters out high-frequency false positives (EMI/Noise)
-  // while maintaining sub-millisecond reaction times.
-  bool currentLineState;
+  // Configurable detection: single read or double confirmation
+  
+  // Read raw line state
+  bool rawLineState;
   #ifdef LINE_INVERT
-    currentLineState = (digitalRead(Config::Pins::CENTER_LINE) == (LINE_INVERT ? LOW : HIGH));
+    rawLineState = (digitalRead(Config::Pins::CENTER_LINE) == (LINE_INVERT ? LOW : HIGH));
   #else
-    currentLineState = (digitalRead(Config::Pins::CENTER_LINE) == HIGH);
+    rawLineState = (digitalRead(Config::Pins::CENTER_LINE) == HIGH);
   #endif
   
-
-  
-  // Debounce with 2 consecutive readings required (with hysteresis)
-  if (currentLineState) {
-    if (lineTriggerCount < 2) {
-      lineTriggerCount++;
+  #ifdef LINE_DOUBLE_CHECK
+    if (LINE_DOUBLE_CHECK) {
+      // Double-check mode: require 2 consecutive positive readings
+      // When first detection occurs (lineTriggerCount == 0 and rawLineState true),
+      // immediately perform second read to avoid waiting for next loop iteration
+      if (rawLineState && lineTriggerCount == 0) {
+        // Immediate second check with microsecond delay for signal stability
+        delayMicroseconds(100); // 100µs delay between reads
+        #ifdef LINE_INVERT
+          bool secondRead = (digitalRead(Config::Pins::CENTER_LINE) == (LINE_INVERT ? LOW : HIGH));
+        #else
+          bool secondRead = (digitalRead(Config::Pins::CENTER_LINE) == HIGH);
+        #endif
+        if (secondRead) {
+          lineTriggerCount = 2; // Both checks passed immediately
+        } else {
+          lineTriggerCount = 0; // Second check failed, reset
+        }
+      } else {
+        // Standard hysteresis debouncing
+        if (rawLineState) {
+          if (lineTriggerCount < 2) {
+            lineTriggerCount++;
+          }
+        } else {
+          if (lineTriggerCount > 0) {
+            lineTriggerCount--;
+          }
+        }
+      }
+      
+      centerLineDetected = (lineTriggerCount >= 2);
+    } else {
+      // Single-check mode: 1-read hysteresis (detect on 1 positive, clear on 1 negative)
+      if (rawLineState) {
+        if (lineTriggerCount < 1) {
+          lineTriggerCount = 1; // Detect immediately on first positive
+        }
+      } else {
+        if (lineTriggerCount > 0) {
+          lineTriggerCount = 0; // Clear immediately on first negative
+        }
+      }
+      
+      centerLineDetected = (lineTriggerCount >= 1);
     }
-  } else {
-    if (lineTriggerCount > 0) {
-      lineTriggerCount--;
+  #else
+    // Backward compatibility: default to double check
+    if (rawLineState) {
+      if (lineTriggerCount < 2) {
+        lineTriggerCount++;
+      }
+    } else {
+      if (lineTriggerCount > 0) {
+        lineTriggerCount--;
+      }
     }
-  }
-  
-  // Confirm line detection only after 2 consecutive positive readings
-  centerLineDetected = (lineTriggerCount >= 2);
+    
+    centerLineDetected = (lineTriggerCount >= 2);
+  #endif
 
   // Track line detection state transitions for debugging
   if (centerLineDetected && !previousCenterLineDetected) {
@@ -163,7 +209,7 @@ void update(unsigned long currentTime) {
     #ifdef DEBUG_MODE_ENABLED
     if (DEBUG_MODE_ENABLED) {
       Serial.print(F("[LINE] Detection START raw="));
-      Serial.print(currentLineState);
+      Serial.print(rawLineState);
       Serial.print(F(" cnt="));
       Serial.print(lineTriggerCount);
       Serial.print(F(" dig="));
@@ -175,7 +221,7 @@ void update(unsigned long currentTime) {
     #ifdef DEBUG_MODE_ENABLED
     if (DEBUG_MODE_ENABLED) {
       Serial.print(F("[LINE] Detection END raw="));
-      Serial.print(currentLineState);
+      Serial.print(rawLineState);
       Serial.print(F(" cnt="));
       Serial.print(lineTriggerCount);
       Serial.println();

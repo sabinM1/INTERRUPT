@@ -8,6 +8,10 @@
 #define DEBUG_MODE_ENABLED false  // Set to true to enable debug mode
 #define TEST_OPENER_ONLY false    // Set to true to test opener strategy then stop (requires IR start module)
 #define LINE_INVERT false         // Set to true to invert line sensor logic (HIGH = line detected)
+// Double-check line detection for noise immunity vs speed:
+// true = 2 consecutive reads required (reduces false positives, ~0.2ms latency with immediate second read)
+// false = single read detection (maximum reaction speed, risk of EMI false triggers)
+#define LINE_DOUBLE_CHECK false
 
 
 namespace Config {
@@ -44,15 +48,16 @@ namespace Config {
     constexpr unsigned long DEBUG_PRINT         = 100;
     constexpr unsigned long BUTTON_DEBOUNCE     = 50;
     constexpr unsigned long LED_BLINK           = 250;
-    constexpr unsigned long SEEK_PATTERNS       = 1200;
-    constexpr unsigned long OPPONENT_LOST_TIMEOUT = 500;
+    constexpr unsigned long SEEK_PATTERNS       = 800;
+    constexpr unsigned long OPPONENT_LOST_TIMEOUT = 350;
     constexpr unsigned long LINE_SENSOR_DISPLAY = 50;
+    constexpr unsigned long SPIN_REVERSE_TIME   = 800; // Time to spin in one direction before reversing
 
     // State transition timings (milliseconds)
-    constexpr unsigned long ATTACK_LOST_TIMEOUT = 150;   // Time before exiting attack if opponent lost
-    constexpr unsigned long MEMORY_PERSISTENCE = 400;    // How long to remember last opponent position
-    constexpr unsigned long STALL_DETECTION = 800;       // Time before stall detection activates
-    constexpr unsigned long CENTER_BOOST_WINDOW = 80;    // Time window for center boost after detection
+    constexpr unsigned long ATTACK_LOST_TIMEOUT = 100;   // Time before exiting attack if opponent lost
+    constexpr unsigned long MEMORY_PERSISTENCE = 350;    // How long to remember last opponent position
+    constexpr unsigned long STALL_DETECTION = 750;       // Time before stall detection activates
+    constexpr unsigned long CENTER_BOOST_WINDOW = 150;    // Time window for center boost after detection
     constexpr unsigned long ATTACK_POWER_LIMIT_TIME = 800; // Time before using full attack power
 
     // Opener Strategy Timing (milliseconds)
@@ -80,21 +85,24 @@ namespace Config {
     // State-specific speeds (0-100 scale, negative for reverse)
     namespace Speeds {
       // Search state: Robot scans for opponent
-      constexpr int SEARCH_BASE = 12;        // Base speed when no recent opponent seen (50% of 25)
-      constexpr int SEARCH_BOOSTED = 17;     // Speed when opponent recently detected (50% of 35)
-      constexpr int SEARCH_CURVE_INSIDE = 10; // Inner wheel speed when curving toward last known position (50% of 25)
+      constexpr int SEARCH_BASE = 20;        // Base speed when no recent opponent seen (50% of 25)
+      constexpr int SEARCH_BOOSTED = 25;     // Speed when opponent recently detected (50% of 35)
+      constexpr int SEARCH_CURVE_INSIDE = 12; // Inner wheel speed when curving toward last known position (50% of 25)
       constexpr int SEARCH_CURVE_OUTSIDE = 45; // Outer wheel speed when curving toward last known position (50% of 30)
       constexpr int SEARCH_WIGGLE_DIFF = 10;  // Speed difference for search wiggle pattern (increased for better turning sensitivity)
 
+      // Spin search: Aggressive rotation when no opponent detected
+      constexpr int SPIN_SPEED = 60;         // Wheel speed for aggressive spin search
+
       // Tracking state: Gentle realignment toward opponent
-      constexpr int TRACK_BASE = 15;          // Base tracking speed (both wheels)
-      constexpr int TRACK_TURN_DIFF = 25;    // Speed difference between wheels for turning (increased for better turning sensitivity)
+      constexpr int TRACK_BASE = 25;          // Base tracking speed (both wheels)
+      constexpr int TRACK_TURN_DIFF = 45;    // Speed difference between wheels for turning (increased for better turning sensitivity)
 
       // Attack state: Aggressive engagement with opponent
       constexpr int ATTACK_FULL = 100;       // Full forward speed for centered opponent
-      constexpr int ATTACK_LIMITED = 75;     // Limited attack power after cooldown period
+      constexpr int ATTACK_LIMITED = 65;     // Limited attack power after cooldown period
       constexpr int ATTACK_SIDE = 35;        // Speed when opponent detected on side sensors
-      constexpr int ATTACK_FRONT_TURN = 90;  // Turning speed when opponent on front-left/right (increased for better turning sensitivity)
+      constexpr int ATTACK_FRONT_TURN = 70;  // Turning speed when opponent on front-left/right (increased for better turning sensitivity)
       constexpr int MEMORY_ATTACK_BONUS = 30; // Speed bonus for recently centered opponent
 
       // Both sides attack state: Opponent detected on both side sensors
@@ -131,12 +139,12 @@ namespace Config {
 
       // Strategy 2 specific turn constants (independent tuning)
       constexpr unsigned long STRAT2_TURN_LEFT_MS = 70;   // ~90° left turn for Strategy 2 (quick like Strategy 1 right turn)
-      constexpr unsigned long STRAT2_TURN_RIGHT_MS = 165; // ~90° right turn for Strategy 2 (longer like Strategy 1 left turn)
+      constexpr unsigned long STRAT2_TURN_RIGHT_MS = 120; // ~90° right turn for Strategy 2 (longer like Strategy 1 left turn)
 
       // Hook strategy timing constants (for strategies 3 and 4)
-      constexpr unsigned long HOOK_DASH_MS = 400;      // Dash distance for hook strategies (tunable)
-      constexpr unsigned long HOOK_TURN_LEFT_MS = 150;  // ~135° left hook turn (320-420ms tunable)
-      constexpr unsigned long HOOK_TURN_RIGHT_MS = 100; // ~135° right hook turn (320-420ms tunable)
+      constexpr unsigned long HOOK_DASH_MS = 450;      // Dash distance for hook strategies (tunable)
+      constexpr unsigned long HOOK_TURN_LEFT_MS = 170;  // ~135° left hook turn (320-420ms tunable)
+      constexpr unsigned long HOOK_TURN_RIGHT_MS = 170; // ~135° right hook turn (320-420ms tunable)
 
       // Strategy 1: LOWER RIGHT FLANK
       constexpr unsigned long RIGHT_FLANK_TOTAL = TURN_RIGHT_MS + DASH_MS + TURN_LEFT_MS;
