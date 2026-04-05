@@ -6,7 +6,7 @@
 // Configuration defines (replace DIP switches)
 #define VL_ENABLED true           // Set to false to disable VL53L0X sensor
 #define DEBUG_MODE_ENABLED false  // Set to true to enable debug mode
-#define TEST_OPENER_ONLY true    // Set to true to test opener strategy then stop (requires IR start module)
+#define TEST_OPENER_ONLY false    // Set to true to test opener strategy then stop (requires IR start module)
 #define LINE_INVERT false         // Set to true to invert line sensor logic (HIGH = line detected)
 
 
@@ -126,24 +126,29 @@ namespace Config {
 
       // Flank strategy timing constants (shared by strategies 1 and 2)
       constexpr unsigned long TURN_RIGHT_MS = 70;     // ~90° hard pivot turn right (180-250ms tunable)
-      constexpr unsigned long TURN_LEFT_MS = 160;      // ~90° hard pivot turn left (180-250ms tunable)
+      constexpr unsigned long TURN_LEFT_MS = 165;      // ~90° hard pivot turn left (180-250ms tunable)
       constexpr unsigned long DASH_MS = 220;           // Forward dash distance (120-250ms tunable)
 
+      // Strategy 2 specific turn constants (independent tuning)
+      constexpr unsigned long STRAT2_TURN_LEFT_MS = 70;   // ~90° left turn for Strategy 2 (quick like Strategy 1 right turn)
+      constexpr unsigned long STRAT2_TURN_RIGHT_MS = 165; // ~90° right turn for Strategy 2 (longer like Strategy 1 left turn)
+
       // Hook strategy timing constants (for strategies 3 and 4)
-      constexpr unsigned long HOOK_TURN_LEFT_MS = 100;  // ~135° left hook turn (320-420ms tunable)
+      constexpr unsigned long HOOK_DASH_MS = 400;      // Dash distance for hook strategies (tunable)
+      constexpr unsigned long HOOK_TURN_LEFT_MS = 150;  // ~135° left hook turn (320-420ms tunable)
       constexpr unsigned long HOOK_TURN_RIGHT_MS = 100; // ~135° right hook turn (320-420ms tunable)
 
       // Strategy 1: LOWER RIGHT FLANK
       constexpr unsigned long RIGHT_FLANK_TOTAL = TURN_RIGHT_MS + DASH_MS + TURN_LEFT_MS;
 
       // Strategy 2: LOWER LEFT FLANK
-      constexpr unsigned long LEFT_FLANK_TOTAL = TURN_LEFT_MS + DASH_MS + TURN_RIGHT_MS;
+      constexpr unsigned long LEFT_FLANK_TOTAL = STRAT2_TURN_LEFT_MS + DASH_MS + STRAT2_TURN_RIGHT_MS;
 
       // Strategy 3: DIAGONAL RIGHT DASH + REAR HOOK
-      constexpr unsigned long DIAGONAL_RIGHT_TOTAL = DASH_MS + HOOK_TURN_LEFT_MS;
+      constexpr unsigned long DIAGONAL_RIGHT_TOTAL = HOOK_DASH_MS + HOOK_TURN_LEFT_MS;
 
       // Strategy 4: DIAGONAL LEFT DASH + REAR HOOK
-      constexpr unsigned long DIAGONAL_LEFT_TOTAL = DASH_MS + HOOK_TURN_RIGHT_MS;
+      constexpr unsigned long DIAGONAL_LEFT_TOTAL = HOOK_DASH_MS + HOOK_TURN_RIGHT_MS;
 
       // Strategies 5-7: Placeholder (not used)
       constexpr unsigned long STRATEGY_5_TOTAL = 0;

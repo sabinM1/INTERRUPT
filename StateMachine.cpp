@@ -85,9 +85,9 @@ namespace StateMachine {
       updateOpponentMemory(currentOpponentDir);
     }
 
-    // 2. Edge Check (highest priority except during RETREAT_TURN)
+    // 2. Edge Check (excludes RETREAT_TURN, STOPPED, and STARTUP states)
     bool centerEdge = Sensors::isCenterLineDetected();
-    if (centerEdge && currentState != State::RETREAT_TURN && currentState != State::STOPPED) {
+    if (centerEdge && currentState != State::RETREAT_TURN && currentState != State::STOPPED && currentState != State::STARTUP) {
       #ifdef DEBUG_MODE_ENABLED
       if (DEBUG_MODE_ENABLED) {
         Serial.print(F("[EDGE] Line detected! State: "));
@@ -607,9 +607,9 @@ namespace StateMachine {
 
   // Strategy 2: LOWER LEFT FLANK (mirror of Strategy 1)
   static void executeLowerLeftFlank(unsigned long elapsed) {
-    const unsigned long TURN_LEFT_MS = Config::Movement::Opener::TURN_LEFT_MS;
+    const unsigned long TURN_LEFT_MS = Config::Movement::Opener::STRAT2_TURN_LEFT_MS;
     const unsigned long DASH_MS = Config::Movement::Opener::DASH_MS;
-    const unsigned long TURN_RIGHT_MS = Config::Movement::Opener::TURN_RIGHT_MS;
+    const unsigned long TURN_RIGHT_MS = Config::Movement::Opener::STRAT2_TURN_RIGHT_MS;
     
     // Phase 1: Hard pivot turn left (~90°)
     if (elapsed < TURN_LEFT_MS) {
@@ -703,17 +703,17 @@ namespace StateMachine {
 
   // Strategy 3: DIAGONAL RIGHT DASH + REAR HOOK
   static void executeDiagonalRightHook(unsigned long elapsed) {
-    const unsigned long DASH_MS = Config::Movement::Opener::DASH_MS;
+    const unsigned long HOOK_DASH_MS = Config::Movement::Opener::HOOK_DASH_MS;
     const unsigned long HOOK_TURN_LEFT_MS = Config::Movement::Opener::HOOK_TURN_LEFT_MS;
     
     // Phase 1: Full-speed forward dash along pre-set diagonal right direction
-    if (elapsed < DASH_MS) {
+    if (elapsed < HOOK_DASH_MS) {
       #ifdef DEBUG_MODE_ENABLED
       if (DEBUG_MODE_ENABLED) {
         Serial.print(F("[HOOK-R] Phase 1: Forward dash "));
         Serial.print(elapsed);
         Serial.print(F("/"));
-        Serial.print(DASH_MS);
+        Serial.print(HOOK_DASH_MS);
         Serial.println(F("ms"));
       }
       #endif
@@ -732,11 +732,11 @@ namespace StateMachine {
                             Config::Motor::Speeds::Opener::DASH_SPEED);
     }
     // Phase 2: Hard left pivot (~135°) to hook around opponent's rear
-    else if (elapsed < (DASH_MS + HOOK_TURN_LEFT_MS)) {
+    else if (elapsed < (HOOK_DASH_MS + HOOK_TURN_LEFT_MS)) {
       #ifdef DEBUG_MODE_ENABLED
       if (DEBUG_MODE_ENABLED) {
         Serial.print(F("[HOOK-R] Phase 2: Left hook turn "));
-        Serial.print(elapsed - DASH_MS);
+        Serial.print(elapsed - HOOK_DASH_MS);
         Serial.print(F("/"));
         Serial.print(HOOK_TURN_LEFT_MS);
         Serial.println(F("ms"));
@@ -759,17 +759,17 @@ namespace StateMachine {
 
   // Strategy 4: DIAGONAL LEFT DASH + REAR HOOK (mirror of Strategy 3)
   static void executeDiagonalLeftHook(unsigned long elapsed) {
-    const unsigned long DASH_MS = Config::Movement::Opener::DASH_MS;
+    const unsigned long HOOK_DASH_MS = Config::Movement::Opener::HOOK_DASH_MS;
     const unsigned long HOOK_TURN_RIGHT_MS = Config::Movement::Opener::HOOK_TURN_RIGHT_MS;
     
     // Phase 1: Full-speed forward dash along pre-set diagonal left direction
-    if (elapsed < DASH_MS) {
+    if (elapsed < HOOK_DASH_MS) {
       #ifdef DEBUG_MODE_ENABLED
       if (DEBUG_MODE_ENABLED) {
         Serial.print(F("[HOOK-L] Phase 1: Forward dash "));
         Serial.print(elapsed);
         Serial.print(F("/"));
-        Serial.print(DASH_MS);
+        Serial.print(HOOK_DASH_MS);
         Serial.println(F("ms"));
       }
       #endif
@@ -788,11 +788,11 @@ namespace StateMachine {
                             Config::Motor::Speeds::Opener::DASH_SPEED);
     }
     // Phase 2: Hard right pivot (~135°) to hook around opponent's rear
-    else if (elapsed < (DASH_MS + HOOK_TURN_RIGHT_MS)) {
+    else if (elapsed < (HOOK_DASH_MS + HOOK_TURN_RIGHT_MS)) {
       #ifdef DEBUG_MODE_ENABLED
       if (DEBUG_MODE_ENABLED) {
         Serial.print(F("[HOOK-L] Phase 2: Right hook turn "));
-        Serial.print(elapsed - DASH_MS);
+        Serial.print(elapsed - HOOK_DASH_MS);
         Serial.print(F("/"));
         Serial.print(HOOK_TURN_RIGHT_MS);
         Serial.println(F("ms"));
