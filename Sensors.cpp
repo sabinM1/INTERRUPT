@@ -17,6 +17,8 @@ static uint16_t vl53loxDistance = 8190;
 static bool vl53loxReady = false;
 static bool centerLineDetected = false;
 static int lineTriggerCount = 0;
+static bool previousCenterLineDetected = false;
+static unsigned long lastLineDetectionTime = 0;
 
 // Config State (from #defines)
 static bool vlDisableSwitchState = !VL_ENABLED;
@@ -139,6 +141,8 @@ void update(unsigned long currentTime) {
     currentLineState = (digitalRead(Config::Pins::CENTER_LINE) == HIGH);
   #endif
   
+
+  
   // Debounce with 2 consecutive readings required (with hysteresis)
   if (currentLineState) {
     if (lineTriggerCount < 2) {
@@ -152,6 +156,34 @@ void update(unsigned long currentTime) {
   
   // Confirm line detection only after 2 consecutive positive readings
   centerLineDetected = (lineTriggerCount >= 2);
+
+  // Track line detection state transitions for debugging
+  if (centerLineDetected && !previousCenterLineDetected) {
+    lastLineDetectionTime = currentTime;
+    #ifdef DEBUG_MODE_ENABLED
+    if (DEBUG_MODE_ENABLED) {
+      Serial.print(F("[LINE] Detection START raw="));
+      Serial.print(currentLineState);
+      Serial.print(F(" cnt="));
+      Serial.print(lineTriggerCount);
+      Serial.print(F(" dig="));
+      Serial.print(digitalRead(Config::Pins::CENTER_LINE));
+      Serial.println();
+    }
+    #endif
+  } else if (!centerLineDetected && previousCenterLineDetected) {
+    #ifdef DEBUG_MODE_ENABLED
+    if (DEBUG_MODE_ENABLED) {
+      Serial.print(F("[LINE] Detection END raw="));
+      Serial.print(currentLineState);
+      Serial.print(F(" cnt="));
+      Serial.print(lineTriggerCount);
+      Serial.println();
+    }
+    #endif
+  }
+  previousCenterLineDetected = centerLineDetected;
+
 
   // --- Distance Sensor (30ms) ---
   if ((currentTime - lastVL53Read) >= 30) {
@@ -269,7 +301,22 @@ int getCombinedSensorPattern() {
   return pattern;
 }
 
-int getCenterLineValue() { return 0; }
+int getCenterLineValue() { 
+  return digitalRead(Config::Pins::CENTER_LINE);
+}
+
+int getLineDigitalValue() {
+  #ifdef LINE_INVERT
+    return (digitalRead(Config::Pins::CENTER_LINE) == (LINE_INVERT ? LOW : HIGH)) ? 1 : 0;
+  #else
+    return (digitalRead(Config::Pins::CENTER_LINE) == HIGH) ? 1 : 0;
+  #endif
+}
+
+int getLineTriggerCount() {
+  return lineTriggerCount;
+}
+
 int getOpponentPosition() { for(int i=0; i<4; i++) if(js40fStates[i]) return i; return -1; }
 
 } // namespace

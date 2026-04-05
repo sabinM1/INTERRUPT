@@ -23,6 +23,9 @@ namespace Sensors {
 
   bool isCenterLineDetected();
   bool isCenterLineDetectedRaw(); // Raw detection without state checks
+  int getCenterLineValue(); // Returns raw line sensor reading (0/1) for debugging
+  int getLineTriggerCount(); // Returns current line debounce counter (0-2)
+  int getLineDigitalValue(); // Returns digital line sensor state (0/1) respecting LINE_INVERT
 
   // IR Start Module (Protocol: START-STOP.md)
   bool isIRModuleConnected();

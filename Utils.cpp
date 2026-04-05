@@ -78,6 +78,9 @@ namespace Utils {
 
     // Line Status
     Serial.print(F("|L:")); Serial.print(Sensors::isCenterLineDetected() ? F("HIT") : F("___"));
+    Serial.print(F("|Lraw:")); Serial.print(Sensors::getCenterLineValue());
+    Serial.print(F("|Ldig:")); Serial.print(Sensors::getLineDigitalValue());
+    Serial.print(F("|Lcnt:")); Serial.print(Sensors::getLineTriggerCount());
 
     // Motors
     Serial.print(F("|M:")); Serial.print(Motors::getActualLeftSpeed());
