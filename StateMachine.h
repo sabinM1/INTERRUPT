@@ -25,6 +25,7 @@ namespace StateMachine {
   // Debug helpers
   int getLastOpponentDirection();
   const char* getDirectionName(int direction);
+  const char* getStrategyName(int strategy);
 
   void updateOpponentMemory(int direction);
 

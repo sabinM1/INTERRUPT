@@ -5,8 +5,10 @@
 
 // Configuration defines (replace DIP switches)
 #define VL_ENABLED true           // Set to false to disable VL53L0X sensor
-#define DEBUG_MODE_ENABLED false  // Set to true to enable debug mode
-#define LINE_INVERT_ENABLED true // Set to true to invert line sensor logic
+#define DEBUG_MODE_ENABLED true  // Set to true to enable debug mode
+#define TEST_OPENER_ONLY false    // Set to true to test only opener strategy then stop
+#define LINE_INVERT false         // Set to true to invert line sensor logic (HIGH = line detected)
+
 
 namespace Config {
   namespace Pins {
@@ -52,10 +54,22 @@ namespace Config {
     constexpr unsigned long STALL_DETECTION = 800;       // Time before stall detection activates
     constexpr unsigned long CENTER_BOOST_WINDOW = 80;    // Time window for center boost after detection
     constexpr unsigned long ATTACK_POWER_LIMIT_TIME = 800; // Time before using full attack power
-    
+
     // Opener Strategy Timing (milliseconds)
-    constexpr unsigned long OPENER_MAX_DURATION = 1000;    // Maximum opener duration before fallback to SEARCH
+    constexpr unsigned long OPENER_MAX_DURATION = 1500;    // Maximum opener duration before fallback to SEARCH
     constexpr unsigned long OPENER_EARLY_EXIT_THRESHOLD = 50; // Minimum time in opener before opponent detection triggers attack
+
+    // Strategy-specific early exit thresholds (50% of total duration)
+    namespace OpenerEarlyExit {
+      constexpr unsigned long STRATEGY_0 = 0;    // 0% of 0ms - NO STRATEGY
+      constexpr unsigned long STRATEGY_1 = 450;  // 50% of 900ms (was 675ms at 75%)
+      constexpr unsigned long STRATEGY_2 = 550;  // 50% of 1100ms (was 825ms at 75%)
+      constexpr unsigned long STRATEGY_3 = 550;  // 50% of 1100ms (was 825ms at 75%)
+      constexpr unsigned long STRATEGY_4 = 450;  // 50% of 900ms (was 675ms at 75%)
+      constexpr unsigned long STRATEGY_5 = 500;  // 50% of 1000ms (was 750ms at 75%)
+      constexpr unsigned long STRATEGY_6 = 400;  // 50% of 800ms (was 600ms at 75%)
+      constexpr unsigned long STRATEGY_7 = 500;  // 50% of 1000ms (was 750ms at 75%)
+    }
   }
 
   namespace Motor { // PWM (0-255)
@@ -64,21 +78,21 @@ namespace Config {
     // State-specific speeds (0-100 scale, negative for reverse)
     namespace Speeds {
       // Search state: Robot scans for opponent
-      constexpr int SEARCH_BASE = 25;        // Base speed when no recent opponent seen
-      constexpr int SEARCH_BOOSTED = 35;     // Speed when opponent recently detected
-      constexpr int SEARCH_CURVE_INSIDE = 25; // Inner wheel speed when curving toward last known position
-      constexpr int SEARCH_CURVE_OUTSIDE = 30; // Outer wheel speed when curving toward last known position
-      constexpr int SEARCH_WIGGLE_DIFF = 8;  // Speed difference for search wiggle pattern
+      constexpr int SEARCH_BASE = 12;        // Base speed when no recent opponent seen (50% of 25)
+      constexpr int SEARCH_BOOSTED = 17;     // Speed when opponent recently detected (50% of 35)
+      constexpr int SEARCH_CURVE_INSIDE = 10; // Inner wheel speed when curving toward last known position (50% of 25)
+      constexpr int SEARCH_CURVE_OUTSIDE = 45; // Outer wheel speed when curving toward last known position (50% of 30)
+      constexpr int SEARCH_WIGGLE_DIFF = 10;  // Speed difference for search wiggle pattern (increased for better turning sensitivity)
 
       // Tracking state: Gentle realignment toward opponent
-      constexpr int TRACK_BASE = 15;         // Base tracking speed (both wheels)
-      constexpr int TRACK_TURN_DIFF = 20;    // Speed difference between wheels for turning
+      constexpr int TRACK_BASE = 15;          // Base tracking speed (both wheels)
+      constexpr int TRACK_TURN_DIFF = 25;    // Speed difference between wheels for turning (increased for better turning sensitivity)
 
       // Attack state: Aggressive engagement with opponent
       constexpr int ATTACK_FULL = 100;       // Full forward speed for centered opponent
       constexpr int ATTACK_LIMITED = 75;     // Limited attack power after cooldown period
       constexpr int ATTACK_SIDE = 35;        // Speed when opponent detected on side sensors
-      constexpr int ATTACK_FRONT_TURN = 85;  // Turning speed when opponent on front-left/right
+      constexpr int ATTACK_FRONT_TURN = 90;  // Turning speed when opponent on front-left/right (increased for better turning sensitivity)
       constexpr int MEMORY_ATTACK_BONUS = 30; // Speed bonus for recently centered opponent
 
       // Both sides attack state: Opponent detected on both side sensors
@@ -87,19 +101,22 @@ namespace Config {
       // Retreat state: Edge avoidance and recovery
       constexpr int RETREAT_POWER = 100;     // Reverse power during retreat phase
       constexpr int RETREAT_TURN_POWER = 100; // Turning power during J-turn phase
-      
-      // Opener Strategy Speeds (0-100 scale)
+
+      // Opener Strategy Speeds (0-100 scale) - AGGRESSIVE VERSION
       namespace Opener {
-        constexpr int SLOW_SCAN_SPEED = 28;           // Strategy 0: Slow forward scan speed
-        constexpr int PIVOT_SCAN_SPEED = 60;          // Strategy 1: Pivot rotation speed
+        constexpr int SLOW_SCAN_SPEED = 0;            // Strategy 0: NO STRATEGY - not used
+        constexpr int PIVOT_SCAN_SPEED = 85;          // Strategy 1: Pivot rotation speed
         constexpr int CHARGE_SPEED = 100;             // Full charge speed for burst strategies
-        constexpr int ARC_SPEED_INSIDE = 30;          // Strategy 2: Inside wheel speed for arc
-        constexpr int ARC_SPEED_OUTSIDE = 40;         // Strategy 2: Outside wheel speed for arc
-        constexpr int MICRO_SWEEP_SPEED = 25;         // Strategy 6: Micro-sweep rotation speed
-        constexpr int REVERSE_BAIT_SPEED = 40;        // Strategy 4: Reverse bait speed
-        constexpr int RAMP_START_SPEED = 30;          // Strategy 5: Ramp starting speed
-        constexpr int ALIGNMENT_SPEED = 25;           // Final alignment speed for all strategies
-        constexpr int WIGGLE_DIFFERENCE = 3;          // Wiggle difference for scanning strategies
+        constexpr int ARC_SPEED_INSIDE = 50;          // Strategy 2: Inside wheel speed for arc
+        constexpr int ARC_SPEED_OUTSIDE = 75;         // Strategy 2: Outside wheel speed for arc
+        constexpr int MICRO_SWEEP_SPEED = 60;         // Strategy 6: Micro-sweep rotation speed
+        constexpr int REVERSE_BAIT_SPEED = 70;        // Strategy 4: Reverse bait speed
+        constexpr int RAMP_START_SPEED = 50;          // Strategy 5: Ramp starting speed
+        constexpr int ALIGNMENT_SPEED = 40;           // Final alignment speed for all strategies
+        constexpr int WIGGLE_DIFFERENCE = 18;         // Wiggle difference for scanning strategies (increased for better turning sensitivity)
+        constexpr int HARD_PIVOT_SPEED = 95;          // Hard pivot speed for aggressive turns
+        constexpr int POWER_SLIDE_SPEED = 90;         // Power slide speed for dramatic movements
+        constexpr int RAPID_OSCILLATION_SPEED = 80;   // Rapid oscillation speed
       }
     }
   }
@@ -107,44 +124,50 @@ namespace Config {
   namespace Movement { // ms
     constexpr unsigned long RETREAT_DURATION = 320;
     constexpr unsigned long TURN_DURATION    = 105;
-    
-    // Opener Strategy Durations (milliseconds)
+
+    // Opener Strategy Durations (milliseconds) - EXTENDED VERSION
     namespace Opener {
-      // Strategy 0: Slow forward scan-creep
-      constexpr unsigned long SLOW_SCAN_PHASE = 700;
-      constexpr unsigned long SLOW_SCAN_TOTAL = 800;
-      
+      // Strategy 0: NO STRATEGY - immediate transition to SEARCH
+      constexpr unsigned long SLOW_SCAN_PHASE = 0;
+      constexpr unsigned long SLOW_SCAN_TOTAL = 0;
+
       // Strategy 1: Quick pivot scan then charge
-      constexpr unsigned long PIVOT_PHASE = 300;
-      constexpr unsigned long CHARGE_PHASE = 150;
-      constexpr unsigned long PIVOT_TOTAL = 550;
-      
+      constexpr unsigned long PIVOT_PHASE = 500;
+      constexpr unsigned long CHARGE_PHASE = 300;
+      constexpr unsigned long PIVOT_TOTAL = 900;
+
       // Strategy 2: Forward arc acquire
-      constexpr unsigned long ARC_PHASE = 500;
-      constexpr unsigned long STRAIGHTEN_PHASE = 150;
-      constexpr unsigned long ARC_TOTAL = 750;
-      
+      constexpr unsigned long ARC_PHASE = 800;
+      constexpr unsigned long STRAIGHTEN_PHASE = 250;
+      constexpr unsigned long ARC_TOTAL = 1100;
+
       // Strategy 3: Delayed burst with front-check
-      constexpr unsigned long HOLD_PHASE = 250;
-      constexpr unsigned long PULSE_PHASE = 100;
-      constexpr unsigned long BURST_PHASE = 200;
-      constexpr unsigned long DELAYED_TOTAL = 750;
-      
+      constexpr unsigned long HOLD_PHASE = 400;
+      constexpr unsigned long PULSE_PHASE = 200;
+      constexpr unsigned long BURST_PHASE = 400;
+      constexpr unsigned long DELAYED_TOTAL = 1100;
+
       // Strategy 4: Reverse bait arc
-      constexpr unsigned long REVERSE_PHASE = 180;
-      constexpr unsigned long FORWARD_ARC_PHASE = 200;
-      constexpr unsigned long BAIT_TOTAL = 600;
-      
+      constexpr unsigned long REVERSE_PHASE = 300;
+      constexpr unsigned long FORWARD_ARC_PHASE = 400;
+      constexpr unsigned long BAIT_TOTAL = 900;
+
       // Strategy 5: Ramped charge with mid-correction
-      constexpr unsigned long RAMP_PHASE = 300;
-      constexpr unsigned long CORRECTION_PHASE = 50;
-      constexpr unsigned long FULL_POWER_PHASE = 150;
-      constexpr unsigned long RAMP_TOTAL = 600;
-      
+      constexpr unsigned long RAMP_PHASE = 500;
+      constexpr unsigned long CORRECTION_PHASE = 100;
+      constexpr unsigned long FULL_POWER_PHASE = 300;
+      constexpr unsigned long RAMP_TOTAL = 1000;
+
       // Strategy 6: Double micro-sweep then burst
-      constexpr unsigned long MICRO_SWEEP_PHASE = 100;
-      constexpr unsigned long BURST_AFTER_SWEEP = 200;
-      constexpr unsigned long MICRO_TOTAL = 500;
+      constexpr unsigned long MICRO_SWEEP_PHASE = 200;
+      constexpr unsigned long BURST_AFTER_SWEEP = 400;
+      constexpr unsigned long MICRO_TOTAL = 800;
+
+      // Strategy 7: Aggressive power slide (new)
+      constexpr unsigned long POWER_SLIDE_PHASE = 400;
+      constexpr unsigned long RECOVERY_PHASE = 200;
+      constexpr unsigned long FINAL_CHARGE_PHASE = 300;
+      constexpr unsigned long POWER_SLIDE_TOTAL = 1000;
     }
   }
 }

@@ -21,7 +21,7 @@ static int lineTriggerCount = 0;
 // Config State (from #defines)
 static bool vlDisableSwitchState = !VL_ENABLED;
 static bool debugModeEnabled = DEBUG_MODE_ENABLED;
-static bool lineInvertEnabled = LINE_INVERT_ENABLED;
+
 
 // Strategy Selection
 static bool strategy1State = false;
@@ -75,9 +75,9 @@ void init() {
 
   // I2C Init
   myWire.begin();
-  delay(50);
+  delay(10);
   myWire.setClock(50000); // Low speed for software I2C stability
-  delay(100);
+  delay(10);
   kickstartVL53L0X();
 
   // Safety check: Is the start module active on boot?
@@ -86,23 +86,14 @@ void init() {
       currentState = STARTUP_ERROR;
   } else {
     robotReadyState = true;
-    currentState = STARTUP_READY_SIGNAL;
+    currentState = OPERATIONAL;
+    digitalWrite(Config::Pins::STATUS_LED, LOW);
   }
 }
 
 void update(unsigned long currentTime) {
   // --- Status LED Logic ---
-  if (currentState == STARTUP_READY_SIGNAL) {
-      if (currentTime - lastBlinkTime > 200) {
-        lastBlinkTime = currentTime;
-        digitalWrite(Config::Pins::STATUS_LED, !digitalRead(Config::Pins::STATUS_LED));
-        // 6 Blinks -> Ready
-        if (++readyBlinkCount >= 6) {
-            digitalWrite(Config::Pins::STATUS_LED, LOW);
-            currentState = OPERATIONAL;
-        }
-      }
-  } else if (currentState == STARTUP_ERROR || currentState == MATCH_STOPPED) {
+  if (currentState == STARTUP_ERROR || currentState == MATCH_STOPPED) {
       // Continuous slow blink for errors/stop
       if (currentTime - lastBlinkTime > 250) {
         lastBlinkTime = currentTime;
@@ -138,13 +129,14 @@ void update(unsigned long currentTime) {
   }
 
   // --- Ultra-Fast Line Polling (Double Check) ---
-  // Polled every loop for maximum responsiveness to prevent overshoot. 
+  // Polled every loop for maximum responsiveness to prevent overshoot.
   // A 2-read confirmation filters out high-frequency false positives (EMI/Noise)
   // while maintaining sub-millisecond reaction times.
-  bool currentRawLine = (digitalRead(Config::Pins::CENTER_LINE) == LOW);
-  if (lineInvertEnabled) currentRawLine = !currentRawLine;
-
-  centerLineDetected = currentRawLine;
+  #ifdef LINE_INVERT
+    centerLineDetected = (digitalRead(Config::Pins::CENTER_LINE) == (LINE_INVERT ? LOW : HIGH));
+  #else
+    centerLineDetected = (digitalRead(Config::Pins::CENTER_LINE) == HIGH);
+  #endif
 
   // --- Distance Sensor (30ms) ---
   if ((currentTime - lastVL53Read) >= 30) {
@@ -183,15 +175,20 @@ void handleIRStartSequence() { if (digitalRead(Config::Pins::IR_START_MODULE) ==
 void handleIRStopSequence() { if (digitalRead(Config::Pins::IR_START_MODULE) == 0) stopSequenceRequested = true; }
 
 // Modifiy this function to ignore the line sensor during RETREAT_TURN state
-bool isCenterLineDetected() { 
+bool isCenterLineDetected() {
   if (StateMachine::getCurrentState() == StateMachine::State::RETREAT_TURN) {
     return false; // Ignore line sensor during retreat
   }
-  return centerLineDetected; 
+  return centerLineDetected;
 }
 
 bool isIRModuleConnected() { return robotReadyState; }
-bool hasMatchStarted() { return matchStarted; }
+bool hasMatchStarted() { 
+#ifdef TEST_OPENER_ONLY
+  if (TEST_OPENER_ONLY && currentState != STARTUP_ERROR && currentState != MATCH_STOPPED) return true;
+#endif
+  return matchStarted; 
+}
 bool shouldStopRobot() { return stopSequenceRequested; }
 void resetStartStopState() { robotReadyState = false; matchStarted = false; stopSequenceRequested = false; }
 bool isStartButtonPressed() { return matchStarted; }
@@ -205,13 +202,13 @@ bool isVL53L0XReady() { return vl53loxReady; }
 uint16_t getVL53L0XDistance() { return vl53loxDistance; }
 bool isVL53L0XDisabled() { return vlDisableSwitchState; }
 bool isDebugModeEnabled() { return debugModeEnabled; }
-bool isLineInvertEnabled() { return lineInvertEnabled; }
+
 
 // Strategy getters
 bool getStrategy1() { return strategy1State; }
 bool getStrategy2() { return strategy2State; }
 bool getStrategy3() { return strategy3State; }
-int getStrategyPattern() { 
+int getStrategyPattern() {
     int pattern = 0;
     if (strategy1State) pattern |= 1;
     if (strategy2State) pattern |= 2;
@@ -230,7 +227,7 @@ int getOpponentDirection() {
   // CRITICAL: Dual Front detection takes priority over single sensors
   if (js40fStates[0] && js40fStates[1]) return CENTER;
   if (isOpponentInFrontCenter()) return CENTER;
-  
+
   // Check for both side sensors
   if (js40fStates[2] && js40fStates[3]) return BOTH_SIDES;
 
@@ -248,11 +245,11 @@ int getCombinedSensorPattern() {
   if (js40fStates[1]) pattern |= (1 << FRONT_RIGHT);  // Bit 1
   if (js40fStates[2]) pattern |= (1 << SIDE_LEFT);    // Bit 2
   if (js40fStates[3]) pattern |= (1 << SIDE_RIGHT);   // Bit 3
-  
+
   // Check for center detection (either dual front sensors or VL53L0X)
   if (js40fStates[0] && js40fStates[1]) pattern |= (1 << CENTER); // Dual front sensors
   if (isOpponentInFrontCenter()) pattern |= (1 << CENTER); // VL53L0X center detection
-  
+
   return pattern;
 }
 

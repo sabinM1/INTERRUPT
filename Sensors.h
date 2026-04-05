@@ -17,7 +17,6 @@ namespace Sensors {
   extern bool js40fStates[4]; // Exposed for debug access
 
   bool isDebugModeEnabled();
-  bool isLineInvertEnabled();
 
   void init();
   void update(unsigned long currentTime);

@@ -45,16 +45,20 @@ namespace Motors {
     }
 
     // --- Driver Output ---
-    float multiplier = 1.0;
+    float multiplierLeft = 1.0;
+    float multiplierRight = 1.0;
 
     // Safety: Apply speed limit if Debug DIP (D6) is active
     if (Sensors::isDebugModeEnabled()) {
-        multiplier = Config::Debug::DEBUG_SPEED_MULTIPLIER;
+        // Retreat and full attack need full power even in debug mode
+        // Check target speeds (not actual) to ensure immediate full power response
+        multiplierLeft = (targetLeft < 0 || targetLeft == 100) ? 1.0 : Config::Debug::DEBUG_SPEED_MULTIPLIER;
+        multiplierRight = (targetRight < 0 || targetRight == 100) ? 1.0 : Config::Debug::DEBUG_SPEED_MULTIPLIER;
     }
 
     // Map percentage to PWM (0-255)
-    int pwmLeft = actualLeft * 2.55 * multiplier;
-    int pwmRight = actualRight * 2.55 * multiplier;
+    int pwmLeft = actualLeft * 2.55 * multiplierLeft;
+    int pwmRight = actualRight * 2.55 * multiplierRight;
 
     xmotion.MotorControl(pwmRight, -pwmLeft);
   }

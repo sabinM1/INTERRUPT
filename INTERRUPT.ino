@@ -15,14 +15,7 @@ void setup() {
   StateMachine::init();
   Utils::init();
 
-  // Visual start sequence (~3s delay)
-  digitalWrite(Config::Pins::STATUS_LED, !digitalRead(Config::Pins::STATUS_LED));
-  delay(2800);
-  digitalWrite(Config::Pins::STATUS_LED, !digitalRead(Config::Pins::STATUS_LED));
-  delay(100);
-  digitalWrite(Config::Pins::STATUS_LED, !digitalRead(Config::Pins::STATUS_LED));
-  delay(100);
-  digitalWrite(Config::Pins::STATUS_LED, !digitalRead(Config::Pins::STATUS_LED));
+
 
   Serial.println("System ready.");
 }

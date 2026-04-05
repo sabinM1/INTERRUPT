@@ -62,10 +62,8 @@ namespace Utils {
     Serial.print(F("T:")); Serial.print(currentTime);
     Serial.print(F("|S:")); Serial.print(StateMachine::getStateName());
 
-    // Line Status + Invert Flag
+    // Line Status
     Serial.print(F("|L:")); Serial.print(Sensors::isCenterLineDetected() ? F("HIT") : F("___"));
-    Serial.print(F("[INV:")); Serial.print(Sensors::isLineInvertEnabled() ? F("1") : F("0"));
-    Serial.print(F("]"));
 
     // Motors
     Serial.print(F("|M:")); Serial.print(Motors::getActualLeftSpeed());
@@ -116,9 +114,13 @@ namespace Utils {
     if (Sensors::isVL53L0XDisabled()) Serial.print(F("OFF"));
     else Serial.print(Sensors::getVL53L0XDistance());
 
-    // Strategy Number (0-7: 3-bit pattern from DIP switches 5,6,7)
+    // Strategy Number and Name (0-7: 3-bit pattern from DIP switches 5,6,7)
     Serial.print(F("|STRAT:"));
-    Serial.print(Sensors::getStrategyPattern());
+    int strategy = Sensors::getStrategyPattern();
+    Serial.print(strategy);
+    Serial.print(F("["));
+    Serial.print(StateMachine::getStrategyName(strategy));
+    Serial.print(F("]"));
 
     Serial.println();
   }
