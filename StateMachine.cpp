@@ -3,19 +3,16 @@
 #include "Sensors.h"
 #include "Motors.h"
 #include "Config.h"
+#include "Utils.h"
 
 namespace StateMachine {
 
   // Opener strategy helper function declarations
   static void executeOpenerStrategy(unsigned long currentTime);
-  static void executeAggressiveScan(unsigned long elapsed);
-  static void executeHardPivotCharge(unsigned long elapsed);
-  static void executePowerSlideArc(unsigned long elapsed);
-  static void executeDramaticBurst(unsigned long elapsed);
-  static void executeAggressiveBait(unsigned long elapsed);
-  static void executePowerRampCharge(unsigned long elapsed);
-  static void executeWideSweepBurst(unsigned long elapsed);
-  static void executeAggressivePowerSlide(unsigned long elapsed);
+  static void executeLowerRightFlank(unsigned long elapsed);
+  static void executeLowerLeftFlank(unsigned long elapsed);
+  static void executeDiagonalRightHook(unsigned long elapsed);
+  static void executeDiagonalLeftHook(unsigned long elapsed);
 
   static State currentState = State::STARTUP;
   static State previousState = State::STARTUP;
@@ -44,31 +41,31 @@ namespace StateMachine {
   // Attack duration tracking
   static unsigned long attackStartTime = 0;
 
-
-
-  // Tuning - now configured in Config.h
-
   void init() {
     currentState = State::STARTUP;
+    previousState = State::STARTUP;
     stateEnterTime = 0;
+    lastActionTaken = 0;
     lastOpponentDirection = -1;
     lastOpponentSeen = 0;
-    lastActionTaken = 0;
-    attackDirectionStartTime = 0;
-    lastAttackDirection = -1;
-    attackStartTime = 0;
+    openerStartTime = 0;
+    currentStrategy = 0;
     openerCompleted = false;
     openerPhase = 0;
     openerHeadingCorrection = 0.0f;
-    currentStrategy = 0;
+    seekingRightward = true;
+    lastSeekPatternChange = 0;
+    attackDirectionStartTime = 0;
+    lastAttackDirection = -1;
+    attackStartTime = 0;
   }
 
   void update(unsigned long currentTime) {
-    // 1. Safety Check
+    // 0. Stop Check (highest priority - stop robot immediately if IR stop requested)
     if (Sensors::shouldStopRobot()) {
       #ifdef DEBUG_MODE_ENABLED
       if (DEBUG_MODE_ENABLED) {
-        Serial.println(F("[SAFETY] Stop requested"));
+        Serial.println(F("[STOP] IR stop requested"));
       }
       #endif
       currentState = State::STOPPED;
@@ -76,107 +73,35 @@ namespace StateMachine {
       return;
     }
 
-    // TEST_OPENER_ONLY mode: After opener completes, stop the robot
-    #ifdef TEST_OPENER_ONLY
-    if (TEST_OPENER_ONLY && currentState != State::OPENER && currentState != State::STARTUP) {
-      if (currentState != State::STOPPED) {
-        #ifdef DEBUG_MODE_ENABLED
-        if (DEBUG_MODE_ENABLED) {
-          Serial.print(F("[TEST] Stopping robot after opener, state: "));
-          Serial.println(getStateName());
-        }
-        #endif
-        currentState = State::STOPPED;
-        Motors::setTargetSpeed(0, 0);
-      }
+    // If already in STOPPED state, exit immediately (prevents any further processing)
+    if (currentState == State::STOPPED) {
       return;
     }
-    #endif
 
-    // 2. State Transition Tracking
-    if (currentState != previousState) {
-      stateEnterTime = currentTime;
-      previousState = currentState;
-      attackDirectionStartTime = 0;
-      lastAttackDirection = -1;
-
-      // Track when attack starts
-      if (currentState == State::ATTACK || currentState == State::BOTH_SIDES_ATTACK) {
-        attackStartTime = currentTime;
-      }
-    }
-
-    // 3. Sensor Snapshot
+    // 1. Sensor Status
     bool opponentDetected = Sensors::isOpponentDetected();
     int currentOpponentDir = Sensors::getOpponentDirection();
-
-    if (opponentDetected && currentOpponentDir != -1) {
-      lastOpponentSeen = currentTime;
-      lastOpponentDirection = currentOpponentDir;
+    if (currentOpponentDir != -1) {
+      updateOpponentMemory(currentOpponentDir);
     }
 
-    if (!Sensors::hasMatchStarted()) {
-      currentState = State::STARTUP;
-      Motors::setTargetSpeed(0, 0);
-      return;
-    }
-
-    // TEST_OPENER_ONLY mode: Auto-start match for testing
-    #ifdef TEST_OPENER_ONLY
-    static bool testMatchStarted = false;
-    if (TEST_OPENER_ONLY && !testMatchStarted) {
-      testMatchStarted = true;
-      // Simulate match start
-      if (currentState == State::STARTUP) {
-        currentStrategy = Sensors::getStrategyPattern();
-        #ifdef DEBUG_MODE_ENABLED
-        if (DEBUG_MODE_ENABLED) {
-          Serial.print(F("[TEST] Auto-starting opener, strategy: "));
-          Serial.println(currentStrategy);
-        }
-        #endif
-        currentState = State::OPENER;
-        openerStartTime = currentTime;
-        openerCompleted = false;
-        openerPhase = 0;
-        openerHeadingCorrection = 0.0f;
-        return;
-      }
-    }
-    #endif
-
-    // Check if we should enter OPENER state (first time match starts)
-    if (currentState == State::STARTUP && Sensors::hasMatchStarted()) {
-      currentStrategy = Sensors::getStrategyPattern();
-      #ifdef DEBUG_MODE_ENABLED
-      if (DEBUG_MODE_ENABLED) {
-        Serial.print(F("[COMPETITION] Starting opener, strategy: "));
-        Serial.println(currentStrategy);
-      }
-      #endif
-      currentState = State::OPENER;
-      openerStartTime = currentTime;
-      openerCompleted = false;
-      openerPhase = 0;
-      openerHeadingCorrection = 0.0f;
-      return;
-    }
-
-    // 4. State Decision Logic
+    // 2. Edge Check (highest priority except during RETREAT_TURN)
     bool centerEdge = Sensors::isCenterLineDetected();
-
-    // Priority: Edge detection overrides everything except RETREAT_TURN
-    if (centerEdge && currentState != State::RETREAT_TURN) {
+    if (centerEdge && currentState != State::RETREAT_TURN && currentState != State::STOPPED) {
       #ifdef DEBUG_MODE_ENABLED
       if (DEBUG_MODE_ENABLED) {
         Serial.print(F("[EDGE] Line detected! State: "));
-        Serial.println(getStateName());
+        Serial.print(getStateName());
+        Serial.print(F(" Loop: "));
+        Serial.print(Utils::getLoopDuration());
+        Serial.print(F("ms Max: "));
+        Serial.print(Utils::getMaxLoopDuration());
+        Serial.println(F("ms"));
       }
       #endif
       lastActionTaken = (uint8_t)!lastActionTaken;
       currentState = State::RETREAT_TURN;
       stateEnterTime = currentTime;
-      // Apply immediate reverse to stop before overshooting
       Motors::setTargetSpeed(-Config::Motor::Speeds::RETREAT_POWER, -Config::Motor::Speeds::RETREAT_POWER);
       return;
     }
@@ -201,13 +126,13 @@ namespace StateMachine {
         bool earlyExitAllowed = false;
         switch (currentStrategy) {
           case 0: earlyExitAllowed = elapsed > Config::Timing::OpenerEarlyExit::STRATEGY_0; break;
-          case 1: earlyExitAllowed = elapsed > Config::Timing::OpenerEarlyExit::STRATEGY_1; break;
-          case 2: earlyExitAllowed = elapsed > Config::Timing::OpenerEarlyExit::STRATEGY_2; break;
-          case 3: earlyExitAllowed = elapsed > Config::Timing::OpenerEarlyExit::STRATEGY_3; break;
-          case 4: earlyExitAllowed = elapsed > Config::Timing::OpenerEarlyExit::STRATEGY_4; break;
-          case 5: earlyExitAllowed = elapsed > Config::Timing::OpenerEarlyExit::STRATEGY_5; break;
-          case 6: earlyExitAllowed = elapsed > Config::Timing::OpenerEarlyExit::STRATEGY_6; break;
-          case 7: earlyExitAllowed = elapsed > Config::Timing::OpenerEarlyExit::STRATEGY_7; break;
+          case 1: earlyExitAllowed = false; break; // No early exit for flank strategies
+          case 2: earlyExitAllowed = false; break; // No early exit for flank strategies
+          case 3: earlyExitAllowed = false; break; // No early exit for diagonal right hook
+          case 4: earlyExitAllowed = false; break; // No early exit for diagonal left hook
+          case 5: earlyExitAllowed = false; break; // Reserved (not used)
+          case 6: earlyExitAllowed = false; break; // Reserved (not used)
+          case 7: earlyExitAllowed = false; break; // Reserved (not used)
         }
         
         if (earlyExitAllowed) {
@@ -230,118 +155,108 @@ namespace StateMachine {
       // Continue to motor actuation switch which will execute opener strategy
     }
 
-    // Priority: Attack > Track/Search (edge already handled above)
-    if (currentState != State::RETREAT_TURN && currentState != State::OPENER) {
-        if (opponentDetected && currentOpponentDir != -1) {
-          bool shouldAttack = (currentOpponentDir == FRONT_LEFT || currentOpponentDir == FRONT_RIGHT || currentOpponentDir == CENTER || currentOpponentDir == SIDE_LEFT || currentOpponentDir == SIDE_RIGHT);
-          bool bothSidesDetected = (currentOpponentDir == BOTH_SIDES);
-
-          if (bothSidesDetected) {
-            if (currentState != State::BOTH_SIDES_ATTACK) {
-              currentState = State::BOTH_SIDES_ATTACK;
-              stateEnterTime = currentTime;
-
-            }
-          }
-          else if (shouldAttack) {
-            if (currentState != State::ATTACK) {
-              currentState = State::ATTACK;
-              stateEnterTime = currentTime;
-
-            }
-            else if (currentState == State::SEARCH) {
-              currentState = State::TRACKING;
-            }
-          }
-        }
-        else if (!opponentDetected && lastOpponentDirection != -1 && (currentTime - lastOpponentSeen) < Config::Timing::MEMORY_PERSISTENCE) {
-           // Short memory persistence
-           if(currentState != State::ATTACK) currentState = State::TRACKING;
-        }
-        else if (currentState == State::TRACKING || currentState == State::SEARCH) {
-          // Stay in current state if no opponent detected
-        }
-        else {
-          // Default to SEARCH if no other state applies
-          currentState = State::SEARCH;
-        }
-    }
-
-    // 5. Motor Actuation per State
+    // 3. Main State Machine
     switch (currentState) {
       case State::STARTUP: {
-        Motors::setTargetSpeed(0, 0);
+
+
+        if (currentState == State::STARTUP && Sensors::hasMatchStarted()) {
+          currentStrategy = Sensors::getStrategyPattern();
+          #ifdef DEBUG_MODE_ENABLED
+          if (DEBUG_MODE_ENABLED) {
+            Serial.print(F("[COMPETITION] Starting opener, strategy: "));
+            Serial.println(currentStrategy);
+          }
+          #endif
+          currentState = State::OPENER;
+          openerStartTime = currentTime;
+          openerCompleted = false;
+          openerPhase = 0;
+          openerHeadingCorrection = 0.0f;
+          return;
+        }
         break;
       }
 
       case State::OPENER: {
         executeOpenerStrategy(currentTime);
+        // If opener completed and we're in TEST_OPENER_ONLY mode, state may have changed to STOPPED
+        if (currentState == State::STOPPED) {
+          return; // Exit immediately to prevent further processing
+        }
         break;
       }
 
       case State::SEARCH: {
-        int baseSearchSpeed;
-
-        // Boost speed if we recently saw something
-        if (lastOpponentDirection == -1 || (currentTime - lastOpponentSeen) > Config::Timing::OPPONENT_LOST_TIMEOUT) {
-          baseSearchSpeed = Config::Motor::Speeds::SEARCH_BASE;
-        } else {
-          baseSearchSpeed = Config::Motor::Speeds::SEARCH_BOOSTED;
+        // Determine search speed based on opponent memory
+        int baseSpeed = Config::Motor::Speeds::SEARCH_BASE;
+        if (currentTime - lastOpponentSeen < Config::Timing::MEMORY_PERSISTENCE) {
+          baseSpeed = Config::Motor::Speeds::SEARCH_BOOSTED;
         }
 
-        int leftSpeed = baseSearchSpeed;
-        int rightSpeed = baseSearchSpeed;
-
-        // Memory Search: Curve towards last known position instead of spinning
-        // This prevents "ghost" sensors from causing spin-outs
-        if (lastOpponentDirection != -1 && (currentTime - lastOpponentSeen) <= Config::Timing::OPPONENT_LOST_TIMEOUT) {
-            if (lastOpponentDirection == FRONT_LEFT || lastOpponentDirection == SIDE_LEFT) {
-                leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
-                rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
-            } else if (lastOpponentDirection == FRONT_RIGHT || lastOpponentDirection == SIDE_RIGHT) {
-                leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
-                rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
-            }
-        } else {
-          // Standard Search: Shallow wiggle
-          if (currentTime - lastSeekPatternChange > Config::Timing::SEEK_PATTERNS) {
-            lastSeekPatternChange = currentTime;
-            seekingRightward = !seekingRightward;
-          }
-          if (seekingRightward) {
-              leftSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
-              rightSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
-          } else {
-              leftSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
-              rightSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
-          }
+        // Search pattern: alternate between slight left/right curves
+        if (currentTime - lastSeekPatternChange > Config::Timing::SEEK_PATTERNS) {
+          lastSeekPatternChange = currentTime;
+          seekingRightward = !seekingRightward;
         }
 
-        // Ensure minimum forward speed to prevent spinning
-        leftSpeed = max(5, leftSpeed);
-        rightSpeed = max(5, rightSpeed);
+        int leftSpeed = baseSpeed;
+        int rightSpeed = baseSpeed;
 
-        leftSpeed = max(-100, min(100, leftSpeed));
-        rightSpeed = max(-100, min(100, rightSpeed));
+        if (seekingRightward) {
+          leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
+          rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
+        } else {
+          leftSpeed = Config::Motor::Speeds::SEARCH_CURVE_INSIDE;
+          rightSpeed = Config::Motor::Speeds::SEARCH_CURVE_OUTSIDE;
+        }
+
+        // Add wiggle for better scanning
+        if ((currentTime / 300) % 2 == 0) {
+          leftSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+          rightSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+        } else {
+          leftSpeed -= Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+          rightSpeed += Config::Motor::Speeds::SEARCH_WIGGLE_DIFF;
+        }
+
+        // Check for opponent detection to transition to TRACKING
+        if (opponentDetected && currentOpponentDir != -1) {
+          currentState = State::TRACKING;
+          stateEnterTime = currentTime;
+        }
+
         Motors::setTargetSpeed(leftSpeed, rightSpeed);
         break;
       }
 
       case State::TRACKING: {
-        // Gentle realignment with minimum forward speed
         int leftTrackSpeed = Config::Motor::Speeds::TRACK_BASE;
         int rightTrackSpeed = Config::Motor::Speeds::TRACK_BASE;
 
-        if (lastOpponentDirection != -1) {
-          if (lastOpponentDirection == FRONT_LEFT || lastOpponentDirection == SIDE_LEFT) {
-             leftTrackSpeed = max(Config::Motor::Speeds::TRACK_BASE / 2, Config::Motor::Speeds::TRACK_BASE - Config::Motor::Speeds::TRACK_TURN_DIFF);
-             rightTrackSpeed = Config::Motor::Speeds::TRACK_BASE + Config::Motor::Speeds::TRACK_TURN_DIFF;
-          }
-          else if (lastOpponentDirection == FRONT_RIGHT || lastOpponentDirection == SIDE_RIGHT) {
-             leftTrackSpeed = Config::Motor::Speeds::TRACK_BASE + Config::Motor::Speeds::TRACK_TURN_DIFF;
-             rightTrackSpeed = max(Config::Motor::Speeds::TRACK_BASE / 2, Config::Motor::Speeds::TRACK_BASE - Config::Motor::Speeds::TRACK_TURN_DIFF);
+        if (currentOpponentDir == FRONT_LEFT || currentOpponentDir == SIDE_LEFT) {
+          rightTrackSpeed = Config::Motor::Speeds::TRACK_BASE + Config::Motor::Speeds::TRACK_TURN_DIFF;
+          leftTrackSpeed = max(Config::Motor::Speeds::TRACK_BASE / 2, Config::Motor::Speeds::TRACK_BASE - Config::Motor::Speeds::TRACK_TURN_DIFF);
+        } else if (currentOpponentDir == FRONT_RIGHT || currentOpponentDir == SIDE_RIGHT) {
+          leftTrackSpeed = Config::Motor::Speeds::TRACK_BASE + Config::Motor::Speeds::TRACK_TURN_DIFF;
+          rightTrackSpeed = max(Config::Motor::Speeds::TRACK_BASE / 2, Config::Motor::Speeds::TRACK_BASE - Config::Motor::Speeds::TRACK_TURN_DIFF);
+        }
+
+        // Check if opponent is centered for transition to ATTACK
+        if (currentOpponentDir == CENTER) {
+          currentState = State::ATTACK;
+          stateEnterTime = currentTime;
+          attackStartTime = currentTime;
+        }
+
+        // Check if opponent lost for transition to SEARCH
+        if (!opponentDetected) {
+          if (currentTime - stateEnterTime > Config::Timing::OPPONENT_LOST_TIMEOUT) {
+            currentState = State::SEARCH;
+            lastSeekPatternChange = currentTime;
           }
         }
+
         Motors::setTargetSpeed(leftTrackSpeed, rightTrackSpeed);
         break;
       }
@@ -361,16 +276,25 @@ namespace StateMachine {
         }
         else {
           // Check if we're still on the edge line after retreat sequence
-          if (Sensors::isCenterLineDetected()) {
+          if (Sensors::isCenterLineDetectedRaw()) {
             // Still on edge, restart retreat with opposite turn direction
             lastActionTaken = (uint8_t)!lastActionTaken;
             stateEnterTime = currentTime;
-            // Immediate reverse
             Motors::setTargetSpeed(-Config::Motor::Speeds::RETREAT_POWER, -Config::Motor::Speeds::RETREAT_POWER);
           } else {
-            // Successfully off edge, resume searching
+            // Successfully off edge, resume searching or stop based on TEST_OPENER_ONLY
+            #ifdef TEST_OPENER_ONLY
+            if (TEST_OPENER_ONLY) {
+              currentState = State::STOPPED;
+              Motors::setTargetSpeed(0, 0);
+            } else {
+              currentState = State::SEARCH;
+              lastSeekPatternChange = currentTime;
+            }
+            #else
             currentState = State::SEARCH;
             lastSeekPatternChange = currentTime;
+            #endif
           }
         }
         break;
@@ -378,119 +302,103 @@ namespace StateMachine {
 
       case State::ATTACK: {
         // Debounce loss of target
-        bool opponentStillDetected = Sensors::isOpponentDetected();
-        if (!opponentStillDetected && (currentTime - lastOpponentSeen) > Config::Timing::ATTACK_LOST_TIMEOUT) {
-          currentState = State::SEARCH;
+        if (!opponentDetected) {
+          if (currentTime - stateEnterTime > Config::Timing::ATTACK_LOST_TIMEOUT) {
+            currentState = State::SEARCH;
+            lastSeekPatternChange = currentTime;
+            break;
+          }
+        }
+
+        // Anti-stall: If we're attacking in same direction for too long, add randomness
+        if (currentOpponentDir != -1 && currentOpponentDir != lastAttackDirection) {
+          attackDirectionStartTime = currentTime;
+          lastAttackDirection = currentOpponentDir;
+        }
+        
+        if (currentTime - attackDirectionStartTime > Config::Timing::STALL_DETECTION) {
+          // Randomize attack direction briefly to break stalemate
+          if ((currentTime / 100) % 2 == 0) {
+            Motors::setTargetSpeed(Config::Motor::Speeds::ATTACK_FRONT_TURN, Config::Motor::Speeds::ATTACK_SIDE);
+          } else {
+            Motors::setTargetSpeed(Config::Motor::Speeds::ATTACK_SIDE, Config::Motor::Speeds::ATTACK_FRONT_TURN);
+          }
           break;
         }
 
-        int direction = Sensors::getOpponentDirection();
-        int sensorPattern = Sensors::getCombinedSensorPattern();
+        // Attack based on opponent position
+        bool isLimited = isAttackPowerLimited(currentTime);
+        int attackSpeed = isLimited ? Config::Motor::Speeds::ATTACK_LIMITED : Config::Motor::Speeds::ATTACK_FULL;
 
-        // Limit power if attacking for less than 1 second
-        int attackPower = (currentTime - attackStartTime < Config::Timing::ATTACK_POWER_LIMIT_TIME)
-                         ? Config::Motor::Speeds::ATTACK_LIMITED
-                         : Config::Motor::Speeds::ATTACK_FULL;
-
-        int leftSpeed = attackPower;
-        int rightSpeed = attackPower;
-
-        // Anti-Stall Detection
-        if (direction != lastAttackDirection) {
-            lastAttackDirection = direction;
-            attackDirectionStartTime = currentTime;
+        if (currentOpponentDir == CENTER) {
+          // Center attack - full power forward
+          if (currentTime - lastOpponentSeen < Config::Timing::CENTER_BOOST_WINDOW) {
+            // Recent center detection bonus
+            attackSpeed += Config::Motor::Speeds::MEMORY_ATTACK_BONUS;
+          }
+          Motors::setTargetSpeed(attackSpeed, attackSpeed);
+        } else if (currentOpponentDir == BOTH_SIDES) {
+          // Both sides detected - moderate forward
+          Motors::setTargetSpeed(Config::Motor::Speeds::BOTH_SIDES, Config::Motor::Speeds::BOTH_SIDES);
+        } else if (currentOpponentDir == FRONT_LEFT || currentOpponentDir == SIDE_LEFT) {
+          // Turn right to face opponent
+          Motors::setTargetSpeed(Config::Motor::Speeds::ATTACK_SIDE, Config::Motor::Speeds::ATTACK_FRONT_TURN);
+        } else if (currentOpponentDir == FRONT_RIGHT || currentOpponentDir == SIDE_RIGHT) {
+          // Turn left to face opponent
+          Motors::setTargetSpeed(Config::Motor::Speeds::ATTACK_FRONT_TURN, Config::Motor::Speeds::ATTACK_SIDE);
+        } else {
+          // No current direction, use memory-based attack
+          if (lastOpponentDirection != -1) {
+            if (lastOpponentDirection == FRONT_LEFT || lastOpponentDirection == SIDE_LEFT) {
+              Motors::setTargetSpeed(Config::Motor::Speeds::ATTACK_SIDE, Config::Motor::Speeds::ATTACK_FRONT_TURN);
+            } else if (lastOpponentDirection == FRONT_RIGHT || lastOpponentDirection == SIDE_RIGHT) {
+              Motors::setTargetSpeed(Config::Motor::Speeds::ATTACK_FRONT_TURN, Config::Motor::Speeds::ATTACK_SIDE);
+            } else if (lastOpponentDirection == CENTER) {
+              Motors::setTargetSpeed(attackSpeed, attackSpeed);
+            }
+          } else {
+            // Default forward if no memory
+            Motors::setTargetSpeed(attackSpeed, attackSpeed);
+          }
         }
-        bool stallDetected = (currentTime - attackDirectionStartTime > Config::Timing::STALL_DETECTION);
-
-        // Check for combined sensor patterns first
-        bool sideLeftDetected = (sensorPattern & (1 << SIDE_LEFT)) != 0;
-        bool sideRightDetected = (sensorPattern & (1 << SIDE_RIGHT)) != 0;
-        bool centerDetected = (sensorPattern & (1 << CENTER)) != 0;
-
-        // Handle side left + center detection - turn slightly left (30 difference)
-        if (sideLeftDetected && centerDetected) {
-            leftSpeed = max(0, attackPower - 30);
-            rightSpeed = attackPower;
-        }
-        // Handle side right + center detection - turn slightly right (30 difference)
-        else if (sideRightDetected && centerDetected) {
-            leftSpeed = attackPower;
-            rightSpeed = max(0, attackPower - 30);
-        }
-        // If pushing same direction > 1s, force straight to break deadlock
-        else if (stallDetected && (direction == FRONT_LEFT || direction == FRONT_RIGHT)) {
-             leftSpeed = attackPower; rightSpeed = attackPower;
-        }
-        else if (direction == SIDE_LEFT) {
-            leftSpeed = 0; rightSpeed = Config::Motor::Speeds::ATTACK_SIDE;
-        }
-        else if (direction == SIDE_RIGHT) {
-            leftSpeed = Config::Motor::Speeds::ATTACK_SIDE; rightSpeed = 0;
-        }
-        else if (direction == FRONT_LEFT) {
-            leftSpeed = 0; rightSpeed = min(Config::Motor::Speeds::ATTACK_FRONT_TURN, attackPower);
-        }
-        else if (direction == FRONT_RIGHT) {
-            leftSpeed = min(Config::Motor::Speeds::ATTACK_FRONT_TURN, attackPower); rightSpeed = 0;
-        }
-
-        // Turbo boost if centered (but not for combined patterns)
-        if ((currentTime - lastOpponentSeen) < Config::Timing::CENTER_BOOST_WINDOW &&
-            direction == CENTER &&
-            !(sideLeftDetected && centerDetected) &&
-            !(sideRightDetected && centerDetected)) {
-           leftSpeed = min(leftSpeed + Config::Motor::Speeds::MEMORY_ATTACK_BONUS, attackPower);
-           rightSpeed = min(rightSpeed + Config::Motor::Speeds::MEMORY_ATTACK_BONUS, attackPower);
-        }
-
-        leftSpeed = max(-100, min(100, leftSpeed));
-        rightSpeed = max(-100, min(100, rightSpeed));
-        Motors::setTargetSpeed(leftSpeed, rightSpeed);
-
-        break;
-      }
-
-      case State::STOPPED: {
-        Motors::setTargetSpeed(0, 0);
         break;
       }
 
       case State::BOTH_SIDES_ATTACK: {
-        // Check if opponent is still detected
-        bool opponentStillDetected = Sensors::isOpponentDetected();
-        int currentDir = Sensors::getOpponentDirection();
-
-        if (!opponentStillDetected) {
-          // Transition back to SEARCH if we lose opponent completely
-          if ((currentTime - lastOpponentSeen) > Config::Timing::ATTACK_LOST_TIMEOUT) {
-            currentState = State::SEARCH;
-          }
-          break;
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          Serial.println(F("[BOTH_SIDES] Both sides attack"));
         }
-
-        // If detection changed from BOTH_SIDES to something else, transition appropriately
-        if (currentDir != BOTH_SIDES) {
-          if (currentDir == FRONT_LEFT || currentDir == FRONT_RIGHT ||
-              currentDir == CENTER || currentDir == SIDE_LEFT || currentDir == SIDE_RIGHT) {
-            currentState = State::ATTACK;
-            stateEnterTime = currentTime;
-          } else {
-            currentState = State::SEARCH;
-          }
-          break;
-        }
-
-        // Limit power if attacking for less than 1 second
-        int attackPower = (currentTime - attackStartTime < Config::Timing::ATTACK_POWER_LIMIT_TIME)
-                         ? Config::Motor::Speeds::ATTACK_LIMITED
-                         : Config::Motor::Speeds::BOTH_SIDES;
-
-        Motors::setTargetSpeed(attackPower, attackPower);
-
+        #endif
+        // Moderate forward power when opponent detected on both sides
+        Motors::setTargetSpeed(Config::Motor::Speeds::BOTH_SIDES, 
+                              Config::Motor::Speeds::BOTH_SIDES);
         break;
+      }
+
+      case State::STOPPED: {
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          static bool stoppedPrinted = false;
+          if (!stoppedPrinted) {
+            Serial.print(F("[STOPPED] Entering STOPPED state"));
+            #ifdef TEST_OPENER_ONLY
+            if (TEST_OPENER_ONLY) {
+              Serial.print(F(" (TEST_OPENER_ONLY mode)"));
+            }
+            #endif
+            Serial.println();
+            stoppedPrinted = true;
+          }
+        }
+        #endif
+        Motors::setTargetSpeed(0, 0);
+        return; // Exit immediately, don't process further
       }
     }
   }
+
+  // --- Helper Functions ---
 
   State getCurrentState() { return currentState; }
 
@@ -500,10 +408,10 @@ namespace StateMachine {
       case State::OPENER: return "OPENER";
       case State::SEARCH: return "SEARCH";
       case State::TRACKING: return "TRACKING";
-      case State::RETREAT_TURN: return "RETREAT";
       case State::ATTACK: return "ATTACK";
+      case State::RETREAT_TURN: return "RETREAT";
+      case State::BOTH_SIDES_ATTACK: return "BOTH_SIDES_ATTACK";
       case State::STOPPED: return "STOPPED";
-      case State::BOTH_SIDES_ATTACK: return "BOTH_SIDES";
       default: return "UNKNOWN";
     }
   }
@@ -511,13 +419,13 @@ namespace StateMachine {
   const char* getStrategyName(int strategy) {
     switch (strategy) {
       case 0: return "NO_STRATEGY";
-      case 1: return "HARD_PIVOT_CHARGE";
-      case 2: return "POWER_SLIDE_ARC";
-      case 3: return "DRAMATIC_BURST";
-      case 4: return "AGGRESSIVE_BAIT";
-      case 5: return "POWER_RAMP_CHARGE";
-      case 6: return "WIDE_SWEEP_BURST";
-      case 7: return "AGGRESSIVE_POWER_SLIDE";
+      case 1: return "LOWER_RIGHT_FLANK";
+      case 2: return "LOWER_LEFT_FLANK";
+      case 3: return "DIAGONAL_RIGHT_HOOK";
+      case 4: return "DIAGONAL_LEFT_HOOK";
+      case 5: return "RESERVED_5";
+      case 6: return "RESERVED_6";
+      case 7: return "RESERVED_7";
       default: return "UNKNOWN";
     }
   }
@@ -532,59 +440,53 @@ namespace StateMachine {
 
   const char* getDirectionName(int direction) {
     switch (direction) {
-      case FRONT_LEFT:  return "F_LEFT";
-      case FRONT_RIGHT: return "F_RIGHT";
-      case SIDE_LEFT:   return "S_LEFT";
-      case SIDE_RIGHT:  return "S_RIGHT";
-      case CENTER:      return "CENTER";
-      case BOTH_SIDES:  return "BOTH_SIDES";
-      default:          return "NONE";
+      case FRONT_LEFT: return "FL";
+      case FRONT_RIGHT: return "FR";
+      case SIDE_LEFT: return "SL";
+      case SIDE_RIGHT: return "SR";
+      case CENTER: return "C";
+      case BOTH_SIDES: return "BOTH";
+      default: return "NONE";
     }
   }
 
-  unsigned long getLastAttackTime() {
-    return attackStartTime;
-  }
+  unsigned long getLastAttackTime() { return attackStartTime; }
 
   bool isAttackPowerLimited(unsigned long currentTime) {
-    if (currentState == State::ATTACK || currentState == State::BOTH_SIDES_ATTACK) {
-      return (currentTime - attackStartTime < Config::Timing::ATTACK_POWER_LIMIT_TIME);
-    }
-    return false;
+    if (attackStartTime == 0) return false;
+    return (currentTime - attackStartTime) < Config::Timing::ATTACK_POWER_LIMIT_TIME;
   }
 
-  // Opener Strategy Implementation
+  // --- Opener Strategy Implementation ---
+
   static void executeOpenerStrategy(unsigned long currentTime) {
     unsigned long elapsed = currentTime - openerStartTime;
-    
-    // Early opponent detection handled within each strategy function
-    // Full opener always executes to completion in competition mode
     
     // Execute strategy based on DIP switch pattern (0-7)
     switch (currentStrategy) {
       case 0: // Strategy 0: NO_STRATEGY - immediate transition to SEARCH
         openerCompleted = true; // Immediately mark as completed
         break;
-      case 1: // Strategy 1: HARD pivot charge
-        executeHardPivotCharge(elapsed);
+      case 1: // Strategy 1: LOWER RIGHT FLANK
+        executeLowerRightFlank(elapsed);
         break;
-      case 2: // Strategy 2: POWER slide arc
-        executePowerSlideArc(elapsed);
+      case 2: // Strategy 2: LOWER LEFT FLANK
+        executeLowerLeftFlank(elapsed);
         break;
-      case 3: // Strategy 3: DRAMATIC burst
-        executeDramaticBurst(elapsed);
+      case 3: // Strategy 3: DIAGONAL RIGHT DASH + REAR HOOK
+        executeDiagonalRightHook(elapsed);
         break;
-      case 4: // Strategy 4: AGGRESSIVE bait
-        executeAggressiveBait(elapsed);
+      case 4: // Strategy 4: DIAGONAL LEFT DASH + REAR HOOK
+        executeDiagonalLeftHook(elapsed);
         break;
-      case 5: // Strategy 5: POWER ramp charge
-        executePowerRampCharge(elapsed);
+      case 5: // Strategy 5: RESERVED (not used)
+        openerCompleted = true; // Immediately transition to SEARCH
         break;
-      case 6: // Strategy 6: WIDE sweep burst
-        executeWideSweepBurst(elapsed);
+      case 6: // Strategy 6: RESERVED (not used)
+        openerCompleted = true; // Immediately transition to SEARCH
         break;
-      case 7: // Strategy 7: EXPERIMENTAL power slide
-        executeAggressivePowerSlide(elapsed);
+      case 7: // Strategy 7: RESERVED (not used)
+        openerCompleted = true; // Immediately transition to SEARCH
         break;
     }
     
@@ -611,370 +513,303 @@ namespace StateMachine {
       }
       #endif
       
-      // Always transition to SEARCH after opener completion
-      // Opponent detection during opener is handled by early exit check
+      // Transition to SEARCH or STOPPED based on TEST_OPENER_ONLY mode
+      #ifdef TEST_OPENER_ONLY
+      if (TEST_OPENER_ONLY) {
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          Serial.println(F("[TEST] Opener complete - entering STOPPED state"));
+        }
+        #endif
+        currentState = State::STOPPED;
+        Motors::setTargetSpeed(0, 0); // Immediate stop in test mode
+      } else {
+        currentState = State::SEARCH;
+      }
+      #else
       currentState = State::SEARCH;
+      #endif
       stateEnterTime = currentTime;
     }
   }
 
-  // Strategy 0: AGGRESSIVE forward scan with dramatic oscillations
-  static void executeAggressiveScan(unsigned long elapsed) {
-    if (elapsed < Config::Movement::Opener::SLOW_SCAN_PHASE) {
-      // AGGRESSIVE forward advance with dramatic side-to-side scanning
-      int scanSpeed = Config::Motor::Speeds::Opener::SLOW_SCAN_SPEED;
-      
-      // Check for opponent during scan - AGGRESSIVE RESPONSE
-      int sensorPattern = Sensors::getCombinedSensorPattern();
-      if ((sensorPattern & 0x1F) != 0) {
-        // OPPONENT DETECTED - Boost aggression!
-        scanSpeed += 30; // Massive power boost
-      }
-      
-      // Dramatic oscillation pattern: 200ms cycles with hard turns
-      int cycle = (elapsed / 200) % 4;
-      switch (cycle) {
-        case 0: // Hard left turn
-          Motors::setTargetSpeed(scanSpeed / 2, scanSpeed);
-          break;
-        case 1: // Hard right turn  
-          Motors::setTargetSpeed(scanSpeed, scanSpeed / 2);
-          break;
-        case 2: // Forward burst
-          Motors::setTargetSpeed(scanSpeed + 20, scanSpeed + 20);
-          break;
-        case 3: // Wide oscillation
-          Motors::setTargetSpeed(scanSpeed - 15, scanSpeed + 15);
-          break;
-      }
-    } else if (elapsed < Config::Movement::Opener::SLOW_SCAN_TOTAL) {
-      // Power forward alignment with aggressive straightening
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 25,
-                            Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 25);
-    } else {
-      openerCompleted = true;
-    }
-  }
-
-  // Strategy 1: AGGRESSIVE hard pivot scan with power charge
-  static void executeHardPivotCharge(unsigned long elapsed) {
-    if (elapsed < Config::Movement::Opener::PIVOT_PHASE) {
-      // HARD pivot rotation with aggressive speed
-      int pivotSpeed = Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED;
-      
-      // Check for opponent during pivot - AGGRESSIVE RESPONSE
-      int sensorPattern = Sensors::getCombinedSensorPattern();
-      if ((sensorPattern & 0x1F) != 0) {
-        // OPPONENT DETECTED - Immediate charge with power boost!
-        Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED + 20,
-                              Config::Motor::Speeds::Opener::CHARGE_SPEED + 20);
-        return;
-      }
-      
-      Motors::setTargetSpeed(pivotSpeed, -pivotSpeed);
-    } else if (elapsed < (Config::Movement::Opener::PIVOT_PHASE + Config::Movement::Opener::CHARGE_PHASE)) {
-      // POWER charge forward at maximum speed
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                            Config::Motor::Speeds::Opener::CHARGE_SPEED);
-    } else if (elapsed < Config::Movement::Opener::PIVOT_TOTAL) {
-      // Aggressive forward alignment with slight oscillation
-      if ((elapsed / 50) % 2 == 0) {
-        Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 30,
-                              Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 25);
-      } else {
-        Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 25,
-                              Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 30);
-      }
-    } else {
-      openerCompleted = true;
-    }
-  }
-
-  // Strategy 2: AGGRESSIVE wide arc with power slide
-  static void executePowerSlideArc(unsigned long elapsed) {
-    if (elapsed < Config::Movement::Opener::ARC_PHASE) {
-      // DRAMATIC wide arc with power slide effect
-      int outsideSpeed = Config::Motor::Speeds::Opener::POWER_SLIDE_SPEED;
-      int insideSpeed = Config::Motor::Speeds::Opener::ARC_SPEED_INSIDE;
-      
-      // Check for opponent during arc - AGGRESSIVE RESPONSE
-      int sensorPattern = Sensors::getCombinedSensorPattern();
-      if ((sensorPattern & 0x1F) != 0) {
-        // OPPONENT DETECTED - Sharpen turn toward opponent with power boost!
-        if (sensorPattern & (1 << 2)) { // Side left detected
-          outsideSpeed += 60; // Much sharper left turn
-          insideSpeed += 20;  // Power boost
-        } else if (sensorPattern & (1 << 3)) { // Side right detected
-          insideSpeed += 60; // Much sharper right turn
-          outsideSpeed += 20; // Power boost
-        } else if (sensorPattern & (1 << 4)) { // Center detected
-          // MAXIMUM CHARGE!
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                                Config::Motor::Speeds::Opener::CHARGE_SPEED);
-          return;
-        }
-      }
-      
-      Motors::setTargetSpeed(outsideSpeed, insideSpeed);
-    } else if (elapsed < (Config::Movement::Opener::ARC_PHASE + Config::Movement::Opener::STRAIGHTEN_PHASE)) {
-      // Aggressive straightening with power
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40,
-                            Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40);
-    } else if (elapsed < Config::Movement::Opener::ARC_TOTAL) {
-      // Final power alignment with slight oscillation
-      int oscillation = (elapsed / 75) % 2;
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 20 + (oscillation * 10),
-                            Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 20 - (oscillation * 10));
-    } else {
-      openerCompleted = true;
-    }
-  }
-
-  // Strategy 3: AGGRESSIVE delayed burst with dramatic pulses
-  static void executeDramaticBurst(unsigned long elapsed) {
-    // Check for opponent during ANY phase - AGGRESSIVE RESPONSE
-    int sensorPattern = Sensors::getCombinedSensorPattern();
-    if ((sensorPattern & 0x1F) != 0) {
-      // OPPONENT DETECTED - Skip to maximum charge!
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                          Config::Motor::Speeds::Opener::CHARGE_SPEED);
-      return;
-    }
-      
-    // Add opponent detection during power slide for aggressive response
-    if ((sensorPattern & 0x1F) != 0) {
-      // OPPONENT DETECTED - Immediate maximum charge!
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                          Config::Motor::Speeds::Opener::CHARGE_SPEED);
-      return;
-    }
+  // Strategy 1: LOWER RIGHT FLANK
+  static void executeLowerRightFlank(unsigned long elapsed) {
+    const unsigned long TURN_RIGHT_MS = Config::Movement::Opener::TURN_RIGHT_MS;
+    const unsigned long DASH_MS = Config::Movement::Opener::DASH_MS;
+    const unsigned long TURN_LEFT_MS = Config::Movement::Opener::TURN_LEFT_MS;
     
-    if (elapsed < Config::Movement::Opener::HOLD_PHASE) {
-      // TENSE hold with slight vibration
-      int vibration = (elapsed / 50) % 2;
-      Motors::setTargetSpeed(vibration * 5, -vibration * 5);
-    } else if (elapsed < (Config::Movement::Opener::HOLD_PHASE + Config::Movement::Opener::PULSE_PHASE)) {
-      // DRAMATIC left hard turn
-      Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::RAPID_OSCILLATION_SPEED,
-                            Config::Motor::Speeds::Opener::RAPID_OSCILLATION_SPEED);
-    } else if (elapsed < (Config::Movement::Opener::HOLD_PHASE + 2 * Config::Movement::Opener::PULSE_PHASE)) {
-      // DRAMATIC right hard turn
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::RAPID_OSCILLATION_SPEED,
-                            -Config::Motor::Speeds::Opener::RAPID_OSCILLATION_SPEED);
-    } else if (elapsed < (Config::Movement::Opener::HOLD_PHASE + 2 * Config::Movement::Opener::PULSE_PHASE + Config::Movement::Opener::BURST_PHASE)) {
-      // MAXIMUM POWER charge forward
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                            Config::Motor::Speeds::Opener::CHARGE_SPEED);
-    } else if (elapsed < Config::Movement::Opener::DELAYED_TOTAL) {
-      // Aggressive alignment with power oscillation
-      int powerOsc = (elapsed / 60) % 2;
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 30 + (powerOsc * 15),
-                            Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 30 - (powerOsc * 15));
-    } else {
-      openerCompleted = true;
+    // Phase 1: Hard pivot turn right (~90°)
+    if (elapsed < TURN_RIGHT_MS) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-R] Phase 1: Right pivot "));
+        Serial.print(elapsed);
+        Serial.print(F("/"));
+        Serial.print(TURN_RIGHT_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      // Left motor full forward, right motor full reverse for in-place right turn
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED, 
+                            -Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
     }
-  }
-
-
-  // Strategy 4: AGGRESSIVE reverse bait with dramatic recovery
-  static void executeAggressiveBait(unsigned long elapsed) {
-    if (elapsed < Config::Movement::Opener::REVERSE_PHASE) {
-      // AGGRESSIVE reverse with hard turn (power slide backwards)
-      Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::REVERSE_BAIT_SPEED,
-                            -(Config::Motor::Speeds::Opener::REVERSE_BAIT_SPEED + 40));
-      
-      // Check for opponent during reverse - AGGRESSIVE COUNTER-ATTACK
-      int sensorPattern = Sensors::getCombinedSensorPattern();
-      if ((sensorPattern & 0x1F) != 0) {
-        // OPPONENT DETECTED - Immediate forward attack!
-        Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                              Config::Motor::Speeds::Opener::CHARGE_SPEED);
-        return;
+    // Phase 2: Forward dash with edge detection
+    else if (elapsed < (TURN_RIGHT_MS + DASH_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-R] Phase 2: Forward dash "));
+        Serial.print(elapsed - TURN_RIGHT_MS);
+        Serial.print(F("/"));
+        Serial.print(DASH_MS);
+        Serial.println(F("ms"));
       }
-    } else if (elapsed < (Config::Movement::Opener::REVERSE_PHASE + Config::Movement::Opener::FORWARD_ARC_PHASE)) {
-      // DRAMATIC forward power slide with aggressive turn
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED - 10,
-                            Config::Motor::Speeds::Opener::CHARGE_SPEED - 30);
-    } else if (elapsed < Config::Movement::Opener::BAIT_TOTAL - 200) {
-      // Power straightening with oscillation
-      int oscCycle = (elapsed / 80) % 3;
-      switch (oscCycle) {
-        case 0:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 35,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 30);
-          break;
-        case 1:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 30,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 35);
-          break;
-        case 2:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40);
-          break;
-      }
-    } else if (elapsed < Config::Movement::Opener::BAIT_TOTAL) {
-      // Final aggressive alignment
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 25,
-                            Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 25);
-    } else {
-      openerCompleted = true;
-    }
-  }
-
-  // Strategy 5: AGGRESSIVE ramped charge with dramatic power build
-  static void executePowerRampCharge(unsigned long elapsed) {
-    if (elapsed < Config::Movement::Opener::RAMP_PHASE) {
-      // AGGRESSIVE exponential ramp from 50% to 90% power
-      int rampProgress = elapsed * 100 / Config::Movement::Opener::RAMP_PHASE;
-      int rampSpeed = Config::Motor::Speeds::Opener::RAMP_START_SPEED + 
-                     (rampProgress * rampProgress * 40 / 10000); // Exponential curve
-      
-      // Add dramatic weaving during ramp
-      int weave = (elapsed / 120) % 2;
-      Motors::setTargetSpeed(rampSpeed + (weave * 15), rampSpeed - (weave * 15));
-      
-      // Check for opponent during ramp - AGGRESSIVE ACCELERATION
-      int sensorPattern = Sensors::getCombinedSensorPattern();
-      if ((sensorPattern & 0x1F) != 0) {
-        // OPPONENT DETECTED - Skip to maximum power!
-        Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                              Config::Motor::Speeds::Opener::CHARGE_SPEED);
-        return;
-      }
-    } else if (elapsed < (Config::Movement::Opener::RAMP_PHASE + Config::Movement::Opener::CORRECTION_PHASE)) {
-      // AGGRESSIVE correction with hard pivot
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED / 2,
-                            -Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED / 2);
-    } else if (elapsed < (Config::Movement::Opener::RAMP_PHASE + Config::Movement::Opener::CORRECTION_PHASE + Config::Movement::Opener::FULL_POWER_PHASE)) {
-      // MAXIMUM POWER charge with weaving
-      int powerWeave = (elapsed / 100) % 2;
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED - (powerWeave * 25),
-                            Config::Motor::Speeds::Opener::CHARGE_SPEED + (powerWeave * 25));
-    } else if (elapsed < Config::Movement::Opener::RAMP_TOTAL) {
-      // Aggressive alignment with power oscillation
-      int powerCycle = (elapsed / 80) % 3;
-      switch (powerCycle) {
-        case 0:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 45,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40);
-          break;
-        case 1:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 45);
-          break;
-        case 2:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 50,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 50);
-          break;
-      }
-    } else {
-      openerCompleted = true;
-    }
-  }
-
-  // Strategy 7: AGGRESSIVE Power Slide (Experimental)
-  static void executeAggressivePowerSlide(unsigned long elapsed) {
-    if (elapsed < Config::Movement::Opener::POWER_SLIDE_PHASE) {
-      // DRAMATIC power slide with hard turn
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::POWER_SLIDE_SPEED,
-                            -Config::Motor::Speeds::Opener::POWER_SLIDE_SPEED / 2);
-      
-      // Check for opponent during power slide - AGGRESSIVE RESPONSE
-      int sensorPattern = Sensors::getCombinedSensorPattern();
-      if ((sensorPattern & 0x1F) != 0) {
-        // OPPONENT DETECTED - Immediate maximum charge!
-        Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                              Config::Motor::Speeds::Opener::CHARGE_SPEED);
-        return;
-      }
-    } else if (elapsed < (Config::Movement::Opener::POWER_SLIDE_PHASE + Config::Movement::Opener::RECOVERY_PHASE)) {
-      // AGGRESSIVE recovery with opposite turn
-      Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::POWER_SLIDE_SPEED / 2,
-                            Config::Motor::Speeds::Opener::POWER_SLIDE_SPEED);
-    } else if (elapsed < (Config::Movement::Opener::POWER_SLIDE_PHASE + Config::Movement::Opener::RECOVERY_PHASE + Config::Movement::Opener::FINAL_CHARGE_PHASE)) {
-      // MAXIMUM power forward charge
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                            Config::Motor::Speeds::Opener::CHARGE_SPEED);
-    } else if (elapsed < Config::Movement::Opener::POWER_SLIDE_TOTAL) {
-      // Power alignment with aggressive oscillation
-      int osc = (elapsed / 50) % 2;
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40 + (osc * 25),
-                            Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40 - (osc * 25));
-    } else {
-      openerCompleted = true;
-    }
-  }
-
-  // Strategy 6: AGGRESSIVE wide sweeps with power bursts
-  static void executeWideSweepBurst(unsigned long elapsed) {
-    if (elapsed < Config::Movement::Opener::MICRO_SWEEP_PHASE) {
-      // WIDE aggressive left sweep
-      Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::MICRO_SWEEP_SPEED,
-                            Config::Motor::Speeds::Opener::MICRO_SWEEP_SPEED + 20);
-      
-      // Check for opponent during sweep - AGGRESSIVE RESPONSE
-      int sensorPattern = Sensors::getCombinedSensorPattern();
-      if ((sensorPattern & 0x1F) != 0) {
-        // OPPONENT DETECTED - Immediate charge in that direction!
-        if (sensorPattern & (1 << 2)) { // Side left detected during left sweep
-          Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::CHARGE_SPEED / 2,
-                                Config::Motor::Speeds::Opener::CHARGE_SPEED);
-        } else {
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                                Config::Motor::Speeds::Opener::CHARGE_SPEED);
+      #endif
+      // Check for edge line during dash - abort if detected
+      if (Sensors::isCenterLineDetected()) {
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          Serial.println(F("[FLANK-R] Edge detected during dash - aborting"));
         }
+        #endif
+        openerCompleted = true; // Abort strategy
         return;
       }
-    } else if (elapsed < 2 * Config::Movement::Opener::MICRO_SWEEP_PHASE) {
-      // WIDE aggressive right sweep
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::MICRO_SWEEP_SPEED + 20,
-                            -Config::Motor::Speeds::Opener::MICRO_SWEEP_SPEED);
-      
-      // Check for opponent during sweep - AGGRESSIVE RESPONSE
-      int sensorPattern = Sensors::getCombinedSensorPattern();
-      if ((sensorPattern & 0x1F) != 0) {
-        // OPPONENT DETECTED - Immediate charge in that direction!
-        if (sensorPattern & (1 << 3)) { // Side right detected during right sweep
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                                -Config::Motor::Speeds::Opener::CHARGE_SPEED / 2);
-        } else {
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                                Config::Motor::Speeds::Opener::CHARGE_SPEED);
-        }
-        return;
+      // Drive straight forward at reduced speed
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::DASH_SPEED, 
+                            Config::Motor::Speeds::Opener::DASH_SPEED);
+    }
+    // Phase 3: Hard pivot turn left (~90°) to face opponent
+    else if (elapsed < (TURN_RIGHT_MS + DASH_MS + TURN_LEFT_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-R] Phase 3: Left pivot "));
+        Serial.print(elapsed - TURN_RIGHT_MS - DASH_MS);
+        Serial.print(F("/"));
+        Serial.print(TURN_LEFT_MS);
+        Serial.println(F("ms"));
       }
-    } else if (elapsed < (2 * Config::Movement::Opener::MICRO_SWEEP_PHASE + Config::Movement::Opener::BURST_AFTER_SWEEP / 2)) {
-      // POWER burst forward with weaving
-      int weave = (elapsed / 80) % 2;
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED - (weave * 20),
-                            Config::Motor::Speeds::Opener::CHARGE_SPEED + (weave * 20));
-    } else if (elapsed < (2 * Config::Movement::Opener::MICRO_SWEEP_PHASE + Config::Movement::Opener::BURST_AFTER_SWEEP)) {
-      // MAXIMUM straight charge
-      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::CHARGE_SPEED,
-                            Config::Motor::Speeds::Opener::CHARGE_SPEED);
-    } else if (elapsed < Config::Movement::Opener::MICRO_TOTAL) {
-      // Aggressive alignment with power oscillation
-      int powerCycle = (elapsed / 70) % 4;
-      switch (powerCycle) {
-        case 0:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 35);
-          break;
-        case 1:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 35,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 40);
-          break;
-        case 2:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 45,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 45);
-          break;
-        case 3:
-          Motors::setTargetSpeed(Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 30,
-                                Config::Motor::Speeds::Opener::ALIGNMENT_SPEED + 30);
-          break;
-      }
-    } else {
+      #endif
+      // Right motor full forward, left motor full reverse for in-place left turn
+      Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED,
+                            Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+    }
+    // Strategy completed
+    else {
       openerCompleted = true;
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.println(F("[FLANK-R] Lower Right Flank completed"));
+      }
+      #endif
+    }
+  }
+
+  // Strategy 2: LOWER LEFT FLANK (mirror of Strategy 1)
+  static void executeLowerLeftFlank(unsigned long elapsed) {
+    const unsigned long TURN_LEFT_MS = Config::Movement::Opener::TURN_LEFT_MS;
+    const unsigned long DASH_MS = Config::Movement::Opener::DASH_MS;
+    const unsigned long TURN_RIGHT_MS = Config::Movement::Opener::TURN_RIGHT_MS;
+    
+    // Phase 1: Hard pivot turn left (~90°)
+    if (elapsed < TURN_LEFT_MS) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-L] Phase 1: Left pivot "));
+        Serial.print(elapsed);
+        Serial.print(F("/"));
+        Serial.print(TURN_LEFT_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      // Right motor full forward, left motor full reverse for in-place left turn
+      Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED,
+                            Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-L] Motor L:"));
+        Serial.print(-Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+        Serial.print(F(" R:"));
+        Serial.println(Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+      }
+      #endif
+    }
+    // Phase 2: Forward dash with edge detection
+    else if (elapsed < (TURN_LEFT_MS + DASH_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-L] Phase 2: Forward dash "));
+        Serial.print(elapsed - TURN_LEFT_MS);
+        Serial.print(F("/"));
+        Serial.print(DASH_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      // Check for edge line during dash - abort if detected
+      if (Sensors::isCenterLineDetected()) {
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          Serial.println(F("[FLANK-L] Edge detected during dash - aborting"));
+        }
+        #endif
+        openerCompleted = true; // Abort strategy
+        return;
+      }
+      // Drive straight forward at reduced speed
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::DASH_SPEED, 
+                            Config::Motor::Speeds::Opener::DASH_SPEED);
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-L] Motor L:"));
+        Serial.print(Config::Motor::Speeds::Opener::DASH_SPEED);
+        Serial.print(F(" R:"));
+        Serial.println(Config::Motor::Speeds::Opener::DASH_SPEED);
+      }
+      #endif
+    }
+    // Phase 3: Hard pivot turn right (~90°) to face opponent
+    else if (elapsed < (TURN_LEFT_MS + DASH_MS + TURN_RIGHT_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-L] Phase 3: Right pivot "));
+        Serial.print(elapsed - TURN_LEFT_MS - DASH_MS);
+        Serial.print(F("/"));
+        Serial.print(TURN_RIGHT_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      // Left motor full forward, right motor full reverse for in-place right turn
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED,
+                            -Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[FLANK-L] Motor L:"));
+        Serial.print(Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+        Serial.print(F(" R:"));
+        Serial.println(-Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+      }
+      #endif
+    }
+    // Strategy completed
+    else {
+      openerCompleted = true;
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.println(F("[FLANK-L] Lower Left Flank completed"));
+      }
+      #endif
+    }
+  }
+
+  // Strategy 3: DIAGONAL RIGHT DASH + REAR HOOK
+  static void executeDiagonalRightHook(unsigned long elapsed) {
+    const unsigned long DASH_MS = Config::Movement::Opener::DASH_MS;
+    const unsigned long HOOK_TURN_LEFT_MS = Config::Movement::Opener::HOOK_TURN_LEFT_MS;
+    
+    // Phase 1: Full-speed forward dash along pre-set diagonal right direction
+    if (elapsed < DASH_MS) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[HOOK-R] Phase 1: Forward dash "));
+        Serial.print(elapsed);
+        Serial.print(F("/"));
+        Serial.print(DASH_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      // Check for edge line during dash - abort if detected
+      if (Sensors::isCenterLineDetected()) {
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          Serial.println(F("[HOOK-R] Edge detected during dash - aborting"));
+        }
+        #endif
+        openerCompleted = true; // Abort strategy
+        return;
+      }
+      // Drive straight forward at full speed (100% PWM)
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::DASH_SPEED, 
+                            Config::Motor::Speeds::Opener::DASH_SPEED);
+    }
+    // Phase 2: Hard left pivot (~135°) to hook around opponent's rear
+    else if (elapsed < (DASH_MS + HOOK_TURN_LEFT_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[HOOK-R] Phase 2: Left hook turn "));
+        Serial.print(elapsed - DASH_MS);
+        Serial.print(F("/"));
+        Serial.print(HOOK_TURN_LEFT_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      // Right motor full forward, left motor full reverse for in-place left turn (~135°)
+      Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED,
+                            Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+    }
+    // Strategy completed
+    else {
+      openerCompleted = true;
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.println(F("[HOOK-R] Diagonal Right Dash + Rear Hook completed"));
+      }
+      #endif
+    }
+  }
+
+  // Strategy 4: DIAGONAL LEFT DASH + REAR HOOK (mirror of Strategy 3)
+  static void executeDiagonalLeftHook(unsigned long elapsed) {
+    const unsigned long DASH_MS = Config::Movement::Opener::DASH_MS;
+    const unsigned long HOOK_TURN_RIGHT_MS = Config::Movement::Opener::HOOK_TURN_RIGHT_MS;
+    
+    // Phase 1: Full-speed forward dash along pre-set diagonal left direction
+    if (elapsed < DASH_MS) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[HOOK-L] Phase 1: Forward dash "));
+        Serial.print(elapsed);
+        Serial.print(F("/"));
+        Serial.print(DASH_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      // Check for edge line during dash - abort if detected
+      if (Sensors::isCenterLineDetected()) {
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          Serial.println(F("[HOOK-L] Edge detected during dash - aborting"));
+        }
+        #endif
+        openerCompleted = true; // Abort strategy
+        return;
+      }
+      // Drive straight forward at full speed (100% PWM)
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::DASH_SPEED, 
+                            Config::Motor::Speeds::Opener::DASH_SPEED);
+    }
+    // Phase 2: Hard right pivot (~135°) to hook around opponent's rear
+    else if (elapsed < (DASH_MS + HOOK_TURN_RIGHT_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[HOOK-L] Phase 2: Right hook turn "));
+        Serial.print(elapsed - DASH_MS);
+        Serial.print(F("/"));
+        Serial.print(HOOK_TURN_RIGHT_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      // Left motor full forward, right motor full reverse for in-place right turn (~135°)
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED,
+                            -Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+    }
+    // Strategy completed
+    else {
+      openerCompleted = true;
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.println(F("[HOOK-L] Diagonal Left Dash + Rear Hook completed"));
+      }
+      #endif
     }
   }
 }

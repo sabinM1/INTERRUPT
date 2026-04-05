@@ -132,11 +132,26 @@ void update(unsigned long currentTime) {
   // Polled every loop for maximum responsiveness to prevent overshoot.
   // A 2-read confirmation filters out high-frequency false positives (EMI/Noise)
   // while maintaining sub-millisecond reaction times.
+  bool currentLineState;
   #ifdef LINE_INVERT
-    centerLineDetected = (digitalRead(Config::Pins::CENTER_LINE) == (LINE_INVERT ? LOW : HIGH));
+    currentLineState = (digitalRead(Config::Pins::CENTER_LINE) == (LINE_INVERT ? LOW : HIGH));
   #else
-    centerLineDetected = (digitalRead(Config::Pins::CENTER_LINE) == HIGH);
+    currentLineState = (digitalRead(Config::Pins::CENTER_LINE) == HIGH);
   #endif
+  
+  // Debounce with 2 consecutive readings required (with hysteresis)
+  if (currentLineState) {
+    if (lineTriggerCount < 2) {
+      lineTriggerCount++;
+    }
+  } else {
+    if (lineTriggerCount > 0) {
+      lineTriggerCount--;
+    }
+  }
+  
+  // Confirm line detection only after 2 consecutive positive readings
+  centerLineDetected = (lineTriggerCount >= 2);
 
   // --- Distance Sensor (30ms) ---
   if ((currentTime - lastVL53Read) >= 30) {
@@ -182,11 +197,12 @@ bool isCenterLineDetected() {
   return centerLineDetected;
 }
 
+bool isCenterLineDetectedRaw() {
+  return centerLineDetected;
+}
+
 bool isIRModuleConnected() { return robotReadyState; }
 bool hasMatchStarted() { 
-#ifdef TEST_OPENER_ONLY
-  if (TEST_OPENER_ONLY && currentState != STARTUP_ERROR && currentState != MATCH_STOPPED) return true;
-#endif
   return matchStarted; 
 }
 bool shouldStopRobot() { return stopSequenceRequested; }

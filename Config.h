@@ -5,8 +5,8 @@
 
 // Configuration defines (replace DIP switches)
 #define VL_ENABLED true           // Set to false to disable VL53L0X sensor
-#define DEBUG_MODE_ENABLED true  // Set to true to enable debug mode
-#define TEST_OPENER_ONLY false    // Set to true to test only opener strategy then stop
+#define DEBUG_MODE_ENABLED false  // Set to true to enable debug mode
+#define TEST_OPENER_ONLY true    // Set to true to test opener strategy then stop (requires IR start module)
 #define LINE_INVERT false         // Set to true to invert line sensor logic (HIGH = line detected)
 
 
@@ -19,9 +19,9 @@ namespace Config {
     constexpr uint8_t STATUS_LED      = 9;
 
     // Strategy Selection (formerly DIP switches)
-    constexpr uint8_t STRATEGY_1 = 5; // Strategy bit 1
+    constexpr uint8_t STRATEGY_1 = 7; // Strategy bit 1
     constexpr uint8_t STRATEGY_2 = 6; // Strategy bit 2
-    constexpr uint8_t STRATEGY_3 = 7; // Strategy bit 3
+    constexpr uint8_t STRATEGY_3 = 5; // Strategy bit 3
 
     // JS40F Digital Sensors
     constexpr uint8_t JS40F_FRONT_LEFT  = 1;
@@ -62,13 +62,15 @@ namespace Config {
     // Strategy-specific early exit thresholds (50% of total duration)
     namespace OpenerEarlyExit {
       constexpr unsigned long STRATEGY_0 = 0;    // 0% of 0ms - NO STRATEGY
-      constexpr unsigned long STRATEGY_1 = 450;  // 50% of 900ms (was 675ms at 75%)
-      constexpr unsigned long STRATEGY_2 = 550;  // 50% of 1100ms (was 825ms at 75%)
-      constexpr unsigned long STRATEGY_3 = 550;  // 50% of 1100ms (was 825ms at 75%)
-      constexpr unsigned long STRATEGY_4 = 450;  // 50% of 900ms (was 675ms at 75%)
-      constexpr unsigned long STRATEGY_5 = 500;  // 50% of 1000ms (was 750ms at 75%)
-      constexpr unsigned long STRATEGY_6 = 400;  // 50% of 800ms (was 600ms at 75%)
-      constexpr unsigned long STRATEGY_7 = 500;  // 50% of 1000ms (was 750ms at 75%)
+      constexpr unsigned long STRATEGY_1 = 0; // No early exit for flank strategies
+      constexpr unsigned long STRATEGY_2 = 0; // No early exit for flank strategies
+      // Strategies 3-4: Rear hook strategies (no early exit)
+      constexpr unsigned long STRATEGY_3 = 0; // No early exit for diagonal right dash + rear hook
+      constexpr unsigned long STRATEGY_4 = 0; // No early exit for diagonal left dash + rear hook
+      // Strategies 5-7: Placeholder (not used)
+      constexpr unsigned long STRATEGY_5 = 0;
+      constexpr unsigned long STRATEGY_6 = 0;
+      constexpr unsigned long STRATEGY_7 = 0;
     }
   }
 
@@ -104,19 +106,10 @@ namespace Config {
 
       // Opener Strategy Speeds (0-100 scale) - AGGRESSIVE VERSION
       namespace Opener {
-        constexpr int SLOW_SCAN_SPEED = 0;            // Strategy 0: NO STRATEGY - not used
-        constexpr int PIVOT_SCAN_SPEED = 85;          // Strategy 1: Pivot rotation speed
-        constexpr int CHARGE_SPEED = 100;             // Full charge speed for burst strategies
-        constexpr int ARC_SPEED_INSIDE = 50;          // Strategy 2: Inside wheel speed for arc
-        constexpr int ARC_SPEED_OUTSIDE = 75;         // Strategy 2: Outside wheel speed for arc
-        constexpr int MICRO_SWEEP_SPEED = 60;         // Strategy 6: Micro-sweep rotation speed
-        constexpr int REVERSE_BAIT_SPEED = 70;        // Strategy 4: Reverse bait speed
-        constexpr int RAMP_START_SPEED = 50;          // Strategy 5: Ramp starting speed
-        constexpr int ALIGNMENT_SPEED = 40;           // Final alignment speed for all strategies
-        constexpr int WIGGLE_DIFFERENCE = 18;         // Wiggle difference for scanning strategies (increased for better turning sensitivity)
-        constexpr int HARD_PIVOT_SPEED = 95;          // Hard pivot speed for aggressive turns
-        constexpr int POWER_SLIDE_SPEED = 90;         // Power slide speed for dramatic movements
-        constexpr int RAPID_OSCILLATION_SPEED = 80;   // Rapid oscillation speed
+        constexpr int SLOW_SCAN_SPEED = 0;            // Strategy 0: NO_STRATEGY - not used
+        // Flank strategy constants (shared by strategies 1 and 2)
+        constexpr int HARD_PIVOT_SPEED = 100;         // Full speed for hard pivot turns
+        constexpr int DASH_SPEED = 100;               // Maximum PWM for forward dash (100%, used by all strategies)
       }
     }
   }
@@ -131,43 +124,31 @@ namespace Config {
       constexpr unsigned long SLOW_SCAN_PHASE = 0;
       constexpr unsigned long SLOW_SCAN_TOTAL = 0;
 
-      // Strategy 1: Quick pivot scan then charge
-      constexpr unsigned long PIVOT_PHASE = 500;
-      constexpr unsigned long CHARGE_PHASE = 300;
-      constexpr unsigned long PIVOT_TOTAL = 900;
+      // Flank strategy timing constants (shared by strategies 1 and 2)
+      constexpr unsigned long TURN_RIGHT_MS = 70;     // ~90° hard pivot turn right (180-250ms tunable)
+      constexpr unsigned long TURN_LEFT_MS = 160;      // ~90° hard pivot turn left (180-250ms tunable)
+      constexpr unsigned long DASH_MS = 220;           // Forward dash distance (120-250ms tunable)
 
-      // Strategy 2: Forward arc acquire
-      constexpr unsigned long ARC_PHASE = 800;
-      constexpr unsigned long STRAIGHTEN_PHASE = 250;
-      constexpr unsigned long ARC_TOTAL = 1100;
+      // Hook strategy timing constants (for strategies 3 and 4)
+      constexpr unsigned long HOOK_TURN_LEFT_MS = 100;  // ~135° left hook turn (320-420ms tunable)
+      constexpr unsigned long HOOK_TURN_RIGHT_MS = 100; // ~135° right hook turn (320-420ms tunable)
 
-      // Strategy 3: Delayed burst with front-check
-      constexpr unsigned long HOLD_PHASE = 400;
-      constexpr unsigned long PULSE_PHASE = 200;
-      constexpr unsigned long BURST_PHASE = 400;
-      constexpr unsigned long DELAYED_TOTAL = 1100;
+      // Strategy 1: LOWER RIGHT FLANK
+      constexpr unsigned long RIGHT_FLANK_TOTAL = TURN_RIGHT_MS + DASH_MS + TURN_LEFT_MS;
 
-      // Strategy 4: Reverse bait arc
-      constexpr unsigned long REVERSE_PHASE = 300;
-      constexpr unsigned long FORWARD_ARC_PHASE = 400;
-      constexpr unsigned long BAIT_TOTAL = 900;
+      // Strategy 2: LOWER LEFT FLANK
+      constexpr unsigned long LEFT_FLANK_TOTAL = TURN_LEFT_MS + DASH_MS + TURN_RIGHT_MS;
 
-      // Strategy 5: Ramped charge with mid-correction
-      constexpr unsigned long RAMP_PHASE = 500;
-      constexpr unsigned long CORRECTION_PHASE = 100;
-      constexpr unsigned long FULL_POWER_PHASE = 300;
-      constexpr unsigned long RAMP_TOTAL = 1000;
+      // Strategy 3: DIAGONAL RIGHT DASH + REAR HOOK
+      constexpr unsigned long DIAGONAL_RIGHT_TOTAL = DASH_MS + HOOK_TURN_LEFT_MS;
 
-      // Strategy 6: Double micro-sweep then burst
-      constexpr unsigned long MICRO_SWEEP_PHASE = 200;
-      constexpr unsigned long BURST_AFTER_SWEEP = 400;
-      constexpr unsigned long MICRO_TOTAL = 800;
+      // Strategy 4: DIAGONAL LEFT DASH + REAR HOOK
+      constexpr unsigned long DIAGONAL_LEFT_TOTAL = DASH_MS + HOOK_TURN_RIGHT_MS;
 
-      // Strategy 7: Aggressive power slide (new)
-      constexpr unsigned long POWER_SLIDE_PHASE = 400;
-      constexpr unsigned long RECOVERY_PHASE = 200;
-      constexpr unsigned long FINAL_CHARGE_PHASE = 300;
-      constexpr unsigned long POWER_SLIDE_TOTAL = 1000;
+      // Strategies 5-7: Placeholder (not used)
+      constexpr unsigned long STRATEGY_5_TOTAL = 0;
+      constexpr unsigned long STRATEGY_6_TOTAL = 0;
+      constexpr unsigned long STRATEGY_7_TOTAL = 0;
     }
   }
 }

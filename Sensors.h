@@ -22,6 +22,7 @@ namespace Sensors {
   void update(unsigned long currentTime);
 
   bool isCenterLineDetected();
+  bool isCenterLineDetectedRaw(); // Raw detection without state checks
 
   // IR Start Module (Protocol: START-STOP.md)
   bool isIRModuleConnected();

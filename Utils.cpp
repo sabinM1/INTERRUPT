@@ -9,6 +9,9 @@ namespace Utils {
   static unsigned long lastDebugPrint = 0;
   static unsigned long blinkInterval = 0;
   static bool blinkingEnabled = false;
+  static unsigned long lastLoopTime = 0;
+  static unsigned long loopDuration = 0;
+  static unsigned long maxLoopDuration = 0;
 
   void init() {
     pinMode(Config::Pins::STATUS_LED, OUTPUT);
@@ -16,6 +19,15 @@ namespace Utils {
   }
 
   void update(unsigned long currentTime) {
+    // --- Loop Timing ---
+    if (lastLoopTime != 0) {
+      loopDuration = currentTime - lastLoopTime;
+      if (loopDuration > maxLoopDuration) {
+        maxLoopDuration = loopDuration;
+      }
+    }
+    lastLoopTime = currentTime;
+
     // --- LED Management ---
     if (blinkingEnabled && blinkInterval > 0) {
       if ((currentTime - lastLedToggle) >= blinkInterval) {
@@ -60,6 +72,8 @@ namespace Utils {
   void printStatus() {
     unsigned long currentTime = millis();
     Serial.print(F("T:")); Serial.print(currentTime);
+    Serial.print(F("|Lt:")); Serial.print(loopDuration);
+    Serial.print(F("|Lmax:")); Serial.print(maxLoopDuration);
     Serial.print(F("|S:")); Serial.print(StateMachine::getStateName());
 
     // Line Status
@@ -123,5 +137,14 @@ namespace Utils {
     Serial.print(F("]"));
 
     Serial.println();
+    maxLoopDuration = 0;
+  }
+
+  unsigned long getLoopDuration() {
+    return loopDuration;
+  }
+
+  unsigned long getMaxLoopDuration() {
+    return maxLoopDuration;
   }
 }

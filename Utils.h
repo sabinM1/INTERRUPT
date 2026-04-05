@@ -16,6 +16,10 @@ namespace Utils {
 
   // Telemetry
   void printStatus();
+
+  // Loop timing
+  unsigned long getLoopDuration();
+  unsigned long getMaxLoopDuration();
 }
 
 #endif
