@@ -13,6 +13,8 @@ namespace StateMachine {
   static void executeLowerLeftFlank(unsigned long elapsed);
   static void executeDiagonalRightHook(unsigned long elapsed);
   static void executeDiagonalLeftHook(unsigned long elapsed);
+  static void executeWideSweepCharge(unsigned long elapsed);
+  static void executeBackstepLunge(unsigned long elapsed);
 
   static State currentState = State::STARTUP;
   static State previousState = State::STARTUP;
@@ -136,8 +138,8 @@ namespace StateMachine {
           case 2: earlyExitAllowed = false; break; // No early exit for flank strategies
           case 3: earlyExitAllowed = false; break; // No early exit for diagonal right hook
           case 4: earlyExitAllowed = false; break; // No early exit for diagonal left hook
-          case 5: earlyExitAllowed = false; break; // Reserved (not used)
-          case 6: earlyExitAllowed = false; break; // Reserved (not used)
+          case 5: earlyExitAllowed = elapsed > Config::Movement::Opener::SWEEP_CURVE_MS; break; // After arc phase
+          case 6: earlyExitAllowed = false; break; // No early exit - backstep must complete
           case 7: earlyExitAllowed = false; break; // Reserved (not used)
         }
         
@@ -500,8 +502,8 @@ namespace StateMachine {
       case 2: return "LOWER_LEFT_FLANK";
       case 3: return "DIAGONAL_RIGHT_HOOK";
       case 4: return "DIAGONAL_LEFT_HOOK";
-      case 5: return "RESERVED_5";
-      case 6: return "RESERVED_6";
+      case 5: return "WIDE_SWEEP_CHARGE";
+      case 6: return "BACKSTEP_LUNGE";
       case 7: return "RESERVED_7";
       default: return "UNKNOWN";
     }
@@ -556,11 +558,11 @@ namespace StateMachine {
       case 4: // Strategy 4: DIAGONAL LEFT DASH + REAR HOOK
         executeDiagonalLeftHook(elapsed);
         break;
-      case 5: // Strategy 5: RESERVED (not used)
-        openerCompleted = true; // Immediately transition to SEARCH
+      case 5: // Strategy 5: WIDE SWEEP CHARGE
+        executeWideSweepCharge(elapsed);
         break;
-      case 6: // Strategy 6: RESERVED (not used)
-        openerCompleted = true; // Immediately transition to SEARCH
+      case 6: // Strategy 6: BACKSTEP LUNGE
+        executeBackstepLunge(elapsed);
         break;
       case 7: // Strategy 7: RESERVED (not used)
         openerCompleted = true; // Immediately transition to SEARCH
@@ -829,6 +831,129 @@ namespace StateMachine {
       #ifdef DEBUG_MODE_ENABLED
       if (DEBUG_MODE_ENABLED) {
         Serial.println(F("[HOOK-R] Diagonal Right Dash + Rear Hook completed"));
+      }
+      #endif
+    }
+  }
+
+  // Strategy 5: WIDE SWEEP CHARGE
+  // Smooth rightward arc (asymmetric drive) then full-speed straight charge.
+  // No hard stops - continuous motion, harder for opponent to anticipate angle.
+  static void executeWideSweepCharge(unsigned long elapsed) {
+    const unsigned long CURVE_MS = Config::Movement::Opener::SWEEP_CURVE_MS;
+    const unsigned long DASH_MS  = Config::Movement::Opener::SWEEP_DASH_MS;
+
+    // Phase 1: Asymmetric drive - left wheel full, right wheel reduced → sweeps right
+    if (elapsed < CURVE_MS) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[SWEEP] Phase 1: Arc right "));
+        Serial.print(elapsed);
+        Serial.print(F("/"));
+        Serial.print(CURVE_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::DASH_SPEED,
+                            Config::Motor::Speeds::Opener::SWEEP_INNER_SPEED);
+    }
+    // Phase 2: Straighten and full-speed charge
+    else if (elapsed < (CURVE_MS + DASH_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[SWEEP] Phase 2: Charge "));
+        Serial.print(elapsed - CURVE_MS);
+        Serial.print(F("/"));
+        Serial.print(DASH_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      if (Sensors::isCenterLineDetected()) {
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          Serial.println(F("[SWEEP] Edge detected during charge - aborting"));
+        }
+        #endif
+        openerCompleted = true;
+        return;
+      }
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::DASH_SPEED,
+                            Config::Motor::Speeds::Opener::DASH_SPEED);
+    }
+    else {
+      openerCompleted = true;
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.println(F("[SWEEP] Wide Sweep Charge completed"));
+      }
+      #endif
+    }
+  }
+
+  // Strategy 6: BACKSTEP LUNGE
+  // Reverse briefly to confuse opponent IR sensors, pivot right ~45°, then full lunge.
+  // The backward motion causes opponent to re-acquire target, creating a reaction gap.
+  static void executeBackstepLunge(unsigned long elapsed) {
+    const unsigned long REVERSE_MS = Config::Movement::Opener::BACKSTEP_REVERSE_MS;
+    const unsigned long PIVOT_MS   = Config::Movement::Opener::BACKSTEP_PIVOT_MS;
+    const unsigned long LUNGE_MS   = Config::Movement::Opener::BACKSTEP_LUNGE_MS;
+
+    // Phase 1: Full-speed reverse
+    if (elapsed < REVERSE_MS) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[BSTEP] Phase 1: Reverse "));
+        Serial.print(elapsed);
+        Serial.print(F("/"));
+        Serial.print(REVERSE_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      Motors::setTargetSpeed(-Config::Motor::Speeds::Opener::DASH_SPEED,
+                            -Config::Motor::Speeds::Opener::DASH_SPEED);
+    }
+    // Phase 2: Hard pivot right ~45°
+    else if (elapsed < (REVERSE_MS + PIVOT_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[BSTEP] Phase 2: Pivot right "));
+        Serial.print(elapsed - REVERSE_MS);
+        Serial.print(F("/"));
+        Serial.print(PIVOT_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED,
+                            -Config::Motor::Speeds::Opener::HARD_PIVOT_SPEED);
+    }
+    // Phase 3: Full-speed lunge
+    else if (elapsed < (REVERSE_MS + PIVOT_MS + LUNGE_MS)) {
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.print(F("[BSTEP] Phase 3: Lunge "));
+        Serial.print(elapsed - REVERSE_MS - PIVOT_MS);
+        Serial.print(F("/"));
+        Serial.print(LUNGE_MS);
+        Serial.println(F("ms"));
+      }
+      #endif
+      if (Sensors::isCenterLineDetected()) {
+        #ifdef DEBUG_MODE_ENABLED
+        if (DEBUG_MODE_ENABLED) {
+          Serial.println(F("[BSTEP] Edge detected during lunge - aborting"));
+        }
+        #endif
+        openerCompleted = true;
+        return;
+      }
+      Motors::setTargetSpeed(Config::Motor::Speeds::Opener::DASH_SPEED,
+                            Config::Motor::Speeds::Opener::DASH_SPEED);
+    }
+    else {
+      openerCompleted = true;
+      #ifdef DEBUG_MODE_ENABLED
+      if (DEBUG_MODE_ENABLED) {
+        Serial.println(F("[BSTEP] Backstep Lunge completed"));
       }
       #endif
     }

@@ -5,7 +5,8 @@
 
 // Configuration defines (replace DIP switches)
 #define VL_ENABLED true           // Set to false to disable VL53L0X sensor
-#define DEBUG_MODE_ENABLED false  // Set to true to enable debug mode
+#define DEBUG_MODE_ENABLED false  // Set to true to enable debug mode (serial telemetry + speed limiting)
+#define SERIAL_DEBUG_ONLY true   // Set to true to enable serial telemetry only — no speed limiting
 #define TEST_OPENER_ONLY false    // Set to true to test opener strategy then stop (requires IR start module)
 #define LINE_INVERT false         // Set to true to invert line sensor logic (HIGH = line detected)
 // Double-check line detection for noise immunity vs speed:
@@ -118,6 +119,8 @@ namespace Config {
         // Flank strategy constants (shared by strategies 1 and 2)
         constexpr int HARD_PIVOT_SPEED = 100;         // Full speed for hard pivot turns
         constexpr int DASH_SPEED = 100;               // Maximum PWM for forward dash (100%, used by all strategies)
+        // Strategy 5: Wide Sweep Charge
+        constexpr int SWEEP_INNER_SPEED = 30;         // Inner wheel speed during arc (outer = DASH_SPEED)
       }
     }
   }
@@ -158,9 +161,18 @@ namespace Config {
       // Strategy 4: DIAGONAL LEFT DASH + REAR HOOK
       constexpr unsigned long DIAGONAL_LEFT_TOTAL = HOOK_DASH_MS + HOOK_TURN_RIGHT_MS;
 
-      // Strategies 5-7: Placeholder (not used)
-      constexpr unsigned long STRATEGY_5_TOTAL = 0;
-      constexpr unsigned long STRATEGY_6_TOTAL = 0;
+      // Strategy 5: WIDE SWEEP CHARGE (smooth arc right then full charge)
+      constexpr unsigned long SWEEP_CURVE_MS = 350;   // Arc duration (L=100%, R=30%) sweeping right
+      constexpr unsigned long SWEEP_DASH_MS  = 450;   // Full-speed straight charge after arc
+      constexpr unsigned long WIDE_SWEEP_TOTAL = SWEEP_CURVE_MS + SWEEP_DASH_MS;
+
+      // Strategy 6: BACKSTEP LUNGE (reverse + pivot right ~45° then charge)
+      constexpr unsigned long BACKSTEP_REVERSE_MS = 100; // Reverse to create distance & confuse sensors
+      constexpr unsigned long BACKSTEP_PIVOT_MS   = 60;  // Hard pivot right ~45°
+      constexpr unsigned long BACKSTEP_LUNGE_MS   = 550; // Full speed lunge
+      constexpr unsigned long BACKSTEP_LUNGE_TOTAL = BACKSTEP_REVERSE_MS + BACKSTEP_PIVOT_MS + BACKSTEP_LUNGE_MS;
+
+      // Strategy 7: Placeholder (not used)
       constexpr unsigned long STRATEGY_7_TOTAL = 0;
     }
   }

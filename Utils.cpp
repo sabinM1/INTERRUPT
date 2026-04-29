@@ -49,8 +49,8 @@ namespace Utils {
       }
     }
 
-    // --- Serial Telemetry (if DIP enabled) ---
-    if (Sensors::isDebugModeEnabled()) {
+    // --- Serial Telemetry (DEBUG_MODE_ENABLED or SERIAL_DEBUG_ONLY) ---
+    if (Sensors::isAnySerialDebugActive()) {
         if ((currentTime - lastDebugPrint) >= Config::Timing::DEBUG_PRINT) {
           lastDebugPrint = currentTime;
           printStatus();

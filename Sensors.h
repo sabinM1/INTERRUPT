@@ -16,7 +16,9 @@ constexpr int BOTH_SIDES = 5;
 namespace Sensors {
   extern bool js40fStates[4]; // Exposed for debug access
 
-  bool isDebugModeEnabled();
+  bool isDebugModeEnabled();       // Serial + speed limiting
+  bool isSerialDebugOnly();         // Serial only, no speed limit
+  bool isAnySerialDebugActive();    // Either debug mode active (for serial output checks)
 
   void init();
   void update(unsigned long currentTime);

@@ -23,6 +23,7 @@ static unsigned long lastLineDetectionTime = 0;
 // Config State (from #defines)
 static bool vlDisableSwitchState = !VL_ENABLED;
 static bool debugModeEnabled = DEBUG_MODE_ENABLED;
+static bool serialDebugOnly = SERIAL_DEBUG_ONLY;
 
 
 // Strategy Selection
@@ -206,8 +207,7 @@ void update(unsigned long currentTime) {
   // Track line detection state transitions for debugging
   if (centerLineDetected && !previousCenterLineDetected) {
     lastLineDetectionTime = currentTime;
-    #ifdef DEBUG_MODE_ENABLED
-    if (DEBUG_MODE_ENABLED) {
+    if (debugModeEnabled || serialDebugOnly) {
       Serial.print(F("[LINE] Detection START raw="));
       Serial.print(rawLineState);
       Serial.print(F(" cnt="));
@@ -216,17 +216,14 @@ void update(unsigned long currentTime) {
       Serial.print(digitalRead(Config::Pins::CENTER_LINE));
       Serial.println();
     }
-    #endif
   } else if (!centerLineDetected && previousCenterLineDetected) {
-    #ifdef DEBUG_MODE_ENABLED
-    if (DEBUG_MODE_ENABLED) {
+    if (debugModeEnabled || serialDebugOnly) {
       Serial.print(F("[LINE] Detection END raw="));
       Serial.print(rawLineState);
       Serial.print(F(" cnt="));
       Serial.print(lineTriggerCount);
       Serial.println();
     }
-    #endif
   }
   previousCenterLineDetected = centerLineDetected;
 
@@ -296,6 +293,8 @@ bool isVL53L0XReady() { return vl53loxReady; }
 uint16_t getVL53L0XDistance() { return vl53loxDistance; }
 bool isVL53L0XDisabled() { return vlDisableSwitchState; }
 bool isDebugModeEnabled() { return debugModeEnabled; }
+bool isSerialDebugOnly() { return serialDebugOnly; }
+bool isAnySerialDebugActive() { return debugModeEnabled || serialDebugOnly; }
 
 
 // Strategy getters
