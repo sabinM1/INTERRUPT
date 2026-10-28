@@ -81,7 +81,17 @@ namespace Config {
   }
 
   namespace Motor { // PWM (0-255)
-    constexpr int MAX_ACCEL_DELTA = 25; // Soft start ramp for motor acceleration
+    constexpr int MAX_ACCEL_DELTA = 25; // Default soft ramp for general speed changes
+
+    // Gentler ramp used only when spinning up from a standstill (match start).
+    // Lower than MAX_ACCEL_DELTA so the initial launch is smoother and the robot
+    // does not lurch forward the instant the match begins.
+    constexpr int START_ACCEL_DELTA = 18;
+
+    // Gentler ramp used while reacting to a line/edge detection (retreat).
+    // Replaces the previous instant full-power reversal with a controlled
+    // spool-up, reducing wheel slip and overshoot off the table.
+    constexpr int LINE_RETREAT_ACCEL_DELTA = 15;
 
     // State-specific speeds (0-100 scale, negative for reverse)
     namespace Speeds {
@@ -128,6 +138,23 @@ namespace Config {
   namespace Movement { // ms
     constexpr unsigned long RETREAT_DURATION = 320;
     constexpr unsigned long TURN_DURATION    = 105;
+
+    // --- Line-detect recovery turn ---
+    // After backing away from a detected edge, the robot pivots in place so it
+    // faces back into the arena instead of the outside edge.
+    //
+    // Time estimate for a ~180 deg spin-in-place (open-loop, no encoders):
+    //   * Mini-sumo N20 gearmotor at full PWM, under traction: ~3-4 rev/s
+    //   * Wheel diameter ~30mm -> wheel surface speed ~300-380 mm/s
+    //   * Track width ~85mm -> each wheel traces a circle of circumference
+    //     pi * 85 ~= 267mm; a 180 deg pivot moves each wheel half of that
+    //     (~133mm) -> ~350-450ms in theory.
+    // The codebase's own flank turns calibrate ~70ms per ~90 deg, so a 180 deg
+    // pivot lands around 150-180ms in practice. We bias slightly high (170ms)
+    // to absorb traction slip, and the line-clear early-exit below cuts the
+    // turn short if the robot has already cleared the edge. Tune on the bench:
+    // increase if it under-rotates, decrease if it over-rotates.
+    constexpr unsigned long RETREAT_180_TURN_MS = 170;
 
     // Opener Strategy Durations (milliseconds) - EXTENDED VERSION
     namespace Opener {

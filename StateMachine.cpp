@@ -319,18 +319,28 @@ namespace StateMachine {
       case State::RETREAT_TURN: {
         unsigned long elapsed = currentTime - stateEnterTime;
 
-        // Phase 1: Back up straight
+        // Phase 1: Back up straight, away from the detected edge.
         if (elapsed < Config::Movement::RETREAT_DURATION) {
           Motors::setTargetSpeed(-Config::Motor::Speeds::RETREAT_POWER, -Config::Motor::Speeds::RETREAT_POWER);
         }
-        // Phase 2: J-Turn
-        else if (elapsed < (Config::Movement::RETREAT_DURATION + Config::Movement::TURN_DURATION)) {
+        // Phase 2: Pivot ~180 deg in place so the robot faces back into the
+        // arena rather than the outside edge. One wheel drives forward while
+        // the other reverses at the same power, producing a spin about the
+        // robot's centre. Direction alternates each retreat (lastActionTaken)
+        // so repeated edge hits do not always rotate the same way.
+        else if (elapsed < (Config::Movement::RETREAT_DURATION + Config::Movement::RETREAT_180_TURN_MS)) {
           bool turnRight = (lastActionTaken == 0); // Toggle this logic if needed
           if (turnRight) Motors::setTargetSpeed(Config::Motor::Speeds::RETREAT_TURN_POWER, -Config::Motor::Speeds::RETREAT_TURN_POWER);
           else Motors::setTargetSpeed(-Config::Motor::Speeds::RETREAT_TURN_POWER, Config::Motor::Speeds::RETREAT_TURN_POWER);
-          
-          // Early exit: if line has cleared during turn, go to SEARCH immediately
-          if (!Sensors::isCenterLineDetectedRaw()) {
+
+          // Early exit: if the line has cleared, go to SEARCH immediately.
+          // Only honoured once the pivot is mostly done (last 25% of the turn):
+          // while spinning in place the centre sensor sweeps across the line and
+          // reads "clear" for most of the rotation, so an unguarded early exit
+          // would abort the 180 deg turn almost immediately.
+          unsigned long turnElapsed = elapsed - Config::Movement::RETREAT_DURATION;
+          bool turnMostlyDone = turnElapsed > (Config::Movement::RETREAT_180_TURN_MS * 3 / 4);
+          if (turnMostlyDone && !Sensors::isCenterLineDetectedRaw()) {
             #ifdef DEBUG_MODE_ENABLED
             if (DEBUG_MODE_ENABLED) {
               Serial.print(F("[RETREAT] Line cleared during turn, exiting early after "));

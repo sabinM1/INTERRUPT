@@ -8,6 +8,21 @@ namespace Motors {
   static int actualRight = 0;
   static unsigned long lastMotorUpdate = 0;
 
+  // True until the robot has moved off a standstill once. Used to select the
+  // gentler START_ACCEL_DELTA ramp for the very first spin-up after a match
+  // start, then the normal MAX_ACCEL_DELTA ramp afterwards.
+  static bool launchedFromStandstill = false;
+
+  // Move `actual` one step toward `target` by at most `maxDelta`.
+  // Returns the new value. Keeps the ramping logic in one place so every
+  // caller uses identical, well-defined behaviour.
+  static int rampToward(int actual, int target, int maxDelta) {
+    int delta = target - actual;
+    if (abs(delta) > maxDelta)
+      return actual + ((delta > 0) ? maxDelta : -maxDelta);
+    return target;
+  }
+
   void init() {
     xmotion.StopMotors(1);
   }
@@ -21,27 +36,29 @@ namespace Motors {
     int clampedRight = constrain(targetRight, -100, 100);
 
     // --- Motor Ramping ---
-    // Bypass ramping entirely if line is detected or if direction flips for instant reaction
+    // Select the ramp rate for this update:
+    //   * Line/edge detected  -> LINE_RETREAT_ACCEL_DELTA (gentle spool-up on retreat)
+    //   * First move from rest -> START_ACCEL_DELTA (gentle match-start launch)
+    //   * Otherwise            -> MAX_ACCEL_DELTA (normal response)
     bool lineActive = Sensors::isCenterLineDetected();
-
-    if (lineActive || (actualLeft > 0 && clampedLeft < 0) || (actualLeft < 0 && clampedLeft > 0)) {
-        actualLeft = clampedLeft;
-    } else {
-        int delta = clampedLeft - actualLeft;
-        if (abs(delta) > Config::Motor::MAX_ACCEL_DELTA)
-            actualLeft += (delta > 0) ? Config::Motor::MAX_ACCEL_DELTA : -Config::Motor::MAX_ACCEL_DELTA;
-        else
-            actualLeft = clampedLeft;
+    int rampDelta = Config::Motor::MAX_ACCEL_DELTA;
+    if (lineActive) {
+      rampDelta = Config::Motor::LINE_RETREAT_ACCEL_DELTA;
+    } else if (!launchedFromStandstill) {
+      rampDelta = Config::Motor::START_ACCEL_DELTA;
     }
 
-    if (lineActive || (actualRight > 0 && clampedRight < 0) || (actualRight < 0 && clampedRight > 0)) {
-        actualRight = clampedRight;
-    } else {
-        int delta = clampedRight - actualRight;
-        if (abs(delta) > Config::Motor::MAX_ACCEL_DELTA)
-            actualRight += (delta > 0) ? Config::Motor::MAX_ACCEL_DELTA : -Config::Motor::MAX_ACCEL_DELTA;
-        else
-            actualRight = clampedRight;
+    // Direction reversals still bypass the ramp so the wheels can reverse
+    // immediately for traction/safety; only magnitude changes are ramped.
+    bool flipLeft  = (actualLeft  > 0 && clampedLeft  < 0) || (actualLeft  < 0 && clampedLeft  > 0);
+    bool flipRight = (actualRight > 0 && clampedRight < 0) || (actualRight < 0 && clampedRight > 0);
+
+    actualLeft  = flipLeft  ? clampedLeft  : rampToward(actualLeft,  clampedLeft,  rampDelta);
+    actualRight = flipRight ? clampedRight : rampToward(actualRight, clampedRight, rampDelta);
+
+    // Once either wheel has actually moved, the launch ramp is no longer needed.
+    if (actualLeft != 0 || actualRight != 0) {
+      launchedFromStandstill = true;
     }
 
     // --- Driver Output ---
@@ -76,6 +93,7 @@ namespace Motors {
       targetRight = 0;
       actualLeft = 0;
       actualRight = 0;
+      launchedFromStandstill = false; // Next move is a fresh start from rest
       xmotion.StopMotors(1);
   }
 }

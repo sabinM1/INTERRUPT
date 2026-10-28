@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Editor / IDE
+.zed/
+
+# Local backups
+*.backup
